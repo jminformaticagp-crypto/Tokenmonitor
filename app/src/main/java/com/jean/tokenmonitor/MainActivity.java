@@ -297,7 +297,7 @@ public class MainActivity extends Activity {
             WalletManager.CreatedWallet wallet = walletManager.createNewWallet();
             updateWalletPanel();
             showNewMnemonic(wallet.mnemonic, wallet.address);
-        } catch (Exception e) {
+        } catch (Throwable e) {
             new AlertDialog.Builder(this)
                     .setTitle("Não foi possível criar")
                     .setMessage("Erro ao criar a carteira: " + e.getClass().getSimpleName())
@@ -371,7 +371,7 @@ public class MainActivity extends Activity {
                                 .setMessage("Endereço recuperado:\n" + address)
                                 .setPositiveButton("OK", null)
                                 .show();
-                    } catch (Exception e) {
+                    } catch (Throwable e) {
                         new AlertDialog.Builder(this)
                                 .setTitle("Frase inválida")
                                 .setMessage("Não foi possível validar as 12 palavras. Confira a ordem e a grafia.")
@@ -421,7 +421,7 @@ public class MainActivity extends Activity {
                         intent.setType("application/json");
                         intent.putExtra(Intent.EXTRA_TITLE, "token-monitor-wallet-backup.tmj.json");
                         startActivityForResult(intent, REQ_CREATE_BACKUP);
-                    } catch (Exception e) {
+                    } catch (Throwable e) {
                         Toast.makeText(this, "Falha ao preparar o backup.", Toast.LENGTH_LONG).show();
                     } finally {
                         java.util.Arrays.fill(a.toCharArray(), '\0');
@@ -466,7 +466,7 @@ public class MainActivity extends Activity {
                                 .setMessage("Carteira recuperada:\n" + address)
                                 .setPositiveButton("OK", null)
                                 .show();
-                    } catch (Exception e) {
+                    } catch (Throwable e) {
                         new AlertDialog.Builder(this)
                                 .setTitle("Não foi possível restaurar")
                                 .setMessage("Senha incorreta, arquivo inválido ou backup danificado.")
@@ -497,7 +497,7 @@ public class MainActivity extends Activity {
                         .setMessage("O arquivo criptografado foi salvo. Guarde-o em um local seguro e separado da senha.")
                         .setPositiveButton("OK", null)
                         .show();
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 Toast.makeText(this, "Não foi possível salvar o arquivo.", Toast.LENGTH_LONG).show();
             }
         } else if (requestCode == REQ_OPEN_BACKUP) {
@@ -513,7 +513,7 @@ public class MainActivity extends Activity {
                     baos.write(buf, 0, n);
                 }
                 askBackupPasswordAndRestore(baos.toString(StandardCharsets.UTF_8.name()));
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 Toast.makeText(this, "Não foi possível ler o backup.", Toast.LENGTH_LONG).show();
             }
         }
@@ -894,7 +894,7 @@ public class MainActivity extends Activity {
             JSONObject volume = best.optJSONObject("volume");
             double v24 = volume != null ? volume.optDouble("h24", 0) : 0;
             return new PriceResult(price, h1, h24, Math.max(bestLiquidity, 0), v24, null);
-        } catch (Exception e) {
+        } catch (Throwable e) {
             return PriceResult.error(e.getClass().getSimpleName());
         } finally {
             if (conn != null) conn.disconnect();
@@ -1050,7 +1050,7 @@ public class MainActivity extends Activity {
 
     private double parseDouble(String s) {
         try { return Double.parseDouble(s); }
-        catch (Exception e) { return 0; }
+        catch (Throwable e) { return 0; }
     }
 
     private double parseUserNumber(String s) {
