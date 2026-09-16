@@ -5,8 +5,8 @@
     <application
         android:allowBackup="false"
         android:usesCleartextTraffic="false"
-        android:label="Token Monitor Jean"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        android:label="Token Monitor Beta 0.2"
+        android:theme="@android:style/Theme.Material.NoActionBar">
         <activity
             android:name=".MainActivity"
             android:exported="true"
