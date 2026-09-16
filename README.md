@@ -29,3 +29,29 @@ A Beta 0.2 não armazena seed phrase, chave privada, senha da Binance nem API se
 ## APK
 
 O GitHub Actions gera o artefato **TokenMonitorJean-Beta-0.2**. Dentro do ZIP está o `app-debug.apk`.
+
+
+## Ajuste 0.2.1
+
+- somente o preço unitário atual do token permanece em US$;
+- valor investido, valor atual, resultado e carteira total são exibidos em R$;
+- liquidez e volume também são mostrados em R$;
+- a posição manual agora usa **valor investido em R$ + quantidade de tokens**;
+- o app consulta USD/BRL e recalcula a carteira automaticamente.
+
+
+## Carteira e backup — 0.2.2
+
+- criação local de uma carteira EVM com 12 palavras BIP-39;
+- derivação padrão Ethereum `m/44'/60'/0'/0/0`;
+- recuperação por 12 palavras;
+- frase armazenada localmente com AES-GCM e chave protegida pelo Android Keystore;
+- backup portátil criptografado por senha com PBKDF2-HMAC-SHA256 + AES-256-GCM;
+- restauração do arquivo de backup em outro aparelho;
+- o backup usa o seletor de arquivos do Android, então o app não precisa de permissão ampla de armazenamento;
+- compra/venda real permanece bloqueada nesta etapa até testarmos criação, backup e restauração com segurança.
+
+### Regra de segurança
+
+Antes de enviar valores importantes para a carteira, faça os dois backups e teste a restauração em outro aparelho ou instalação limpa.
+Nunca coloque frase-semente, chave privada ou senha de backup no GitHub.

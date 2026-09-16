@@ -19,9 +19,14 @@ jobs:
       - uses: gradle/actions/setup-gradle@v5
         with:
           gradle-version: '9.6.0'
+      - name: Keep debug signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: tokenmonitor-debug-keystore-v1
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
       - uses: actions/upload-artifact@v4
         with:
-          name: TokenMonitorJean-Beta-0.2
+          name: TokenMonitorJean-Beta-0.2.2-Wallet
           path: app/build/outputs/apk/debug/app-debug.apk
