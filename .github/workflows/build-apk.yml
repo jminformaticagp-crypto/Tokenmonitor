@@ -28,5 +28,5 @@ jobs:
         run: gradle :app:assembleDebug --stacktrace
       - uses: actions/upload-artifact@v4
         with:
-          name: TokenMonitorJean-Beta-0.2.2-Wallet
+          name: TokenMonitorJean-Beta-0.2.4-Wallet-Fix
           path: app/build/outputs/apk/debug/app-debug.apk
