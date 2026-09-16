@@ -300,7 +300,7 @@ public class MainActivity extends Activity {
         } catch (Throwable e) {
             new AlertDialog.Builder(this)
                     .setTitle("Não foi possível criar")
-                    .setMessage("Erro ao criar a carteira: " + e.getClass().getSimpleName())
+                    .setMessage("Erro completo:\n" + e.toString() + "\n\nCausa:\n" + String.valueOf(e.getCause()))
                     .setPositiveButton("Fechar", null)
                     .show();
         }
