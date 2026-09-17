@@ -5,7 +5,7 @@
     <application
         android:allowBackup="false"
         android:usesCleartextTraffic="false"
-        android:label="Token Monitor Beta 0.2"
+        android:label="Token Monitor Beta 0.3"
         android:theme="@android:style/Theme.Material.NoActionBar">
         <activity
             android:name=".MainActivity"

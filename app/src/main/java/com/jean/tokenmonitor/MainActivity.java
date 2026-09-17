@@ -156,7 +156,7 @@ public class MainActivity extends Activity {
         brand.addView(subtitle);
         top.addView(brand, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        TextView beta = text("BETA 0.2", 11, Typeface.BOLD, BG);
+        TextView beta = text("BETA 0.3", 11, Typeface.BOLD, BG);
         beta.setGravity(Gravity.CENTER);
         beta.setBackground(makeRounded(AMBER, 18));
         top.addView(beta, new LinearLayout.LayoutParams(dp(78), dp(30)));
