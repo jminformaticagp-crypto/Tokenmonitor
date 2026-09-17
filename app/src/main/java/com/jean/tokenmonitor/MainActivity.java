@@ -84,6 +84,9 @@ public class MainActivity extends Activity {
     private TextView walletStatusText;
     private TextView walletAddressText;
     private TextView walletBalanceText;
+    private LinearLayout marketSection;
+    private LinearLayout walletSection;
+    private LinearLayout reportsSection;
     private WalletManager walletManager;
     private double walletEthBalance = -1;
     private double ethUsd = 0;
@@ -172,18 +175,105 @@ public class MainActivity extends Activity {
         statusText.setPadding(0, dp(12), 0, dp(12));
         root.addView(statusText);
 
-        root.addView(buildPortfolioPanel());
+        LinearLayout tabs = new LinearLayout(this);
+        tabs.setOrientation(LinearLayout.HORIZONTAL);
+        tabs.setPadding(0, 0, 0, dp(12));
+
+        Button tabMarket = smallButton("Mercado", Color.rgb(18, 137, 87));
+        Button tabWallet = smallButton("Carteira", Color.rgb(54, 69, 88));
+        Button tabReports = smallButton("Relatórios", Color.rgb(54, 69, 88));
+
+        LinearLayout.LayoutParams tp1 = new LinearLayout.LayoutParams(0, dp(40), 1f);
+        tp1.setMargins(0, 0, dp(4), 0);
+
+        LinearLayout.LayoutParams tp2 = new LinearLayout.LayoutParams(0, dp(40), 1f);
+        tp2.setMargins(dp(4), 0, dp(4), 0);
+
+        LinearLayout.LayoutParams tp3 = new LinearLayout.LayoutParams(0, dp(40), 1f);
+        tp3.setMargins(dp(4), 0, 0, 0);
+
+        tabs.addView(tabMarket, tp1);
+        tabs.addView(tabWallet, tp2);
+        tabs.addView(tabReports, tp3);
+        root.addView(tabs);
+
+        marketSection = new LinearLayout(this);
+        marketSection.setOrientation(LinearLayout.VERTICAL);
+
+        marketSection.addView(buildPortfolioPanel());
 
         TextView section = text("ATIVOS MONITORADOS", 11, Typeface.BOLD, MUTED);
         section.setLetterSpacing(0.08f);
         section.setPadding(dp(2), dp(18), 0, dp(10));
-        root.addView(section);
+        marketSection.addView(section);
 
         for (Token token : tokens) {
-            root.addView(buildTokenCard(token));
+            marketSection.addView(buildTokenCard(token));
         }
 
-        root.addView(buildWalletPanel());
+        root.addView(marketSection);
+
+        walletSection = new LinearLayout(this);
+        walletSection.setOrientation(LinearLayout.VERTICAL);
+
+        TextView walletTitle = text("MINHA CARTEIRA", 11, Typeface.BOLD, MUTED);
+        walletTitle.setLetterSpacing(0.08f);
+        walletTitle.setPadding(dp(2), dp(4), 0, dp(10));
+
+        walletSection.addView(walletTitle);
+        walletSection.addView(buildWalletPanel());
+        walletSection.setVisibility(View.GONE);
+        root.addView(walletSection);
+
+        reportsSection = new LinearLayout(this);
+        reportsSection.setOrientation(LinearLayout.VERTICAL);
+
+        TextView reportsTitle = text("RELATÓRIOS", 11, Typeface.BOLD, MUTED);
+        reportsTitle.setLetterSpacing(0.08f);
+        reportsTitle.setPadding(dp(2), dp(4), 0, dp(10));
+        reportsSection.addView(reportsTitle);
+
+        TextView reportsInfo = text(
+                "Aqui aparecerão recebimentos, envios, valores, taxas e hashes das transações.",
+                14, Typeface.NORMAL, TEXT);
+        reportsInfo.setPadding(dp(14), dp(18), dp(14), dp(18));
+        reportsInfo.setBackground(makeRoundedStroke(CARD, 16, BORDER));
+        reportsSection.addView(reportsInfo);
+
+        reportsSection.setVisibility(View.GONE);
+        root.addView(reportsSection);
+
+        tabMarket.setOnClickListener(v -> {
+            marketSection.setVisibility(View.VISIBLE);
+            walletSection.setVisibility(View.GONE);
+            reportsSection.setVisibility(View.GONE);
+
+            tabMarket.setBackground(makeRounded(Color.rgb(18, 137, 87), 12));
+            tabWallet.setBackground(makeRounded(Color.rgb(54, 69, 88), 12));
+            tabReports.setBackground(makeRounded(Color.rgb(54, 69, 88), 12));
+        });
+
+        tabWallet.setOnClickListener(v -> {
+            marketSection.setVisibility(View.GONE);
+            walletSection.setVisibility(View.VISIBLE);
+            reportsSection.setVisibility(View.GONE);
+
+            tabMarket.setBackground(makeRounded(Color.rgb(54, 69, 88), 12));
+            tabWallet.setBackground(makeRounded(Color.rgb(18, 137, 87), 12));
+            tabReports.setBackground(makeRounded(Color.rgb(54, 69, 88), 12));
+
+            fetchWalletBalanceAsync();
+        });
+
+        tabReports.setOnClickListener(v -> {
+            marketSection.setVisibility(View.GONE);
+            walletSection.setVisibility(View.GONE);
+            reportsSection.setVisibility(View.VISIBLE);
+
+            tabMarket.setBackground(makeRounded(Color.rgb(54, 69, 88), 12));
+            tabWallet.setBackground(makeRounded(Color.rgb(54, 69, 88), 12));
+            tabReports.setBackground(makeRounded(Color.rgb(18, 137, 87), 12));
+        });
 
         TextView footer = text("Tokens a cada 5 s • carteira em R$ • backup local criptografado", 11,
                 Typeface.NORMAL, MUTED);
