@@ -49,6 +49,8 @@ public class MainActivity extends Activity {
     private static final String DEX_API = "https://api.dexscreener.com/latest/dex/tokens/";
     private static final String FX_API = "https://economia.awesomeapi.com.br/json/last/USD-BRL";
     private static final String FX_FALLBACK_API = "https://api.binance.com/api/v3/ticker/price?symbol=USDTBRL";
+    private static final String ETH_PRICE_API = "https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT";
+    private static final String ROBINHOOD_RPC = "https://rpc.mainnet.chain.robinhood.com";
     private static final long FX_REFRESH_MS = 60000L;
     private static final String PREFS = "token_monitor_beta_02";
 
@@ -81,7 +83,10 @@ public class MainActivity extends Activity {
     private TextView portfolioResult;
     private TextView walletStatusText;
     private TextView walletAddressText;
+    private TextView walletBalanceText;
     private WalletManager walletManager;
+    private double walletEthBalance = -1;
+    private double ethUsd = 0;
     private String pendingBackupJson;
     private static final int REQ_CREATE_BACKUP = 701;
     private static final int REQ_OPEN_BACKUP = 702;
@@ -109,6 +114,7 @@ public class MainActivity extends Activity {
         super.onResume();
         handler.removeCallbacks(autoRefresh);
         handler.postDelayed(autoRefresh, REFRESH_MS);
+        fetchWalletBalanceAsync();
     }
 
     @Override
@@ -208,8 +214,12 @@ public class MainActivity extends Activity {
 
         walletAddressText = text("Crie uma carteira nova ou recupere uma carteira existente.", 13,
                 Typeface.NORMAL, TEXT);
-        walletAddressText.setPadding(0, dp(8), 0, dp(10));
+        walletAddressText.setPadding(0, dp(8), 0, dp(4));
         panel.addView(walletAddressText);
+
+        walletBalanceText = text("Saldo ETH  —", 14, Typeface.BOLD, TEXT);
+        walletBalanceText.setPadding(0, dp(4), 0, dp(10));
+        panel.addView(walletBalanceText);
 
         LinearLayout row1 = new LinearLayout(this);
         row1.setOrientation(LinearLayout.HORIZONTAL);
@@ -260,6 +270,7 @@ public class MainActivity extends Activity {
                 walletStatusText.setText("ATIVA");
                 walletStatusText.setTextColor(GREEN);
                 walletAddressText.setText(address + "\nRobinhood Chain • EVM");
+                fetchWalletBalanceAsync();
             } catch (Exception e) {
                 walletStatusText.setText("ERRO");
                 walletStatusText.setTextColor(RED);
@@ -269,6 +280,131 @@ public class MainActivity extends Activity {
             walletStatusText.setText("NÃO CRIADA");
             walletStatusText.setTextColor(AMBER);
             walletAddressText.setText("Crie uma carteira nova ou recupere uma carteira existente.");
+            walletEthBalance = -1;
+            if (walletBalanceText != null) walletBalanceText.setText("Saldo ETH  —");
+        }
+    }
+
+    private void fetchWalletBalanceAsync() {
+        if (walletManager == null || walletBalanceText == null || !walletManager.hasWallet()) return;
+
+        final String address;
+        try {
+            address = walletManager.getAddress();
+        } catch (Throwable e) {
+            return;
+        }
+
+        walletBalanceText.setText("Saldo ETH  atualizando…");
+
+        pool.submit(() -> {
+            double balance = fetchNativeEthBalance(address);
+            double price = ethUsd > 0 ? ethUsd : fetchEthUsd();
+
+            runOnUiThread(() -> {
+                walletEthBalance = balance;
+                if (price > 0) ethUsd = price;
+                updateWalletBalanceLabel();
+            });
+        });
+    }
+
+    private void updateWalletBalanceLabel() {
+        if (walletBalanceText == null) return;
+
+        if (walletEthBalance < 0) {
+            walletBalanceText.setText("Saldo ETH  indisponível");
+            return;
+        }
+
+        String eth = String.format(Locale.US, "%.8f", walletEthBalance) + " ETH";
+
+        if (ethUsd > 0 && usdBrl > 0) {
+            double brl = walletEthBalance * ethUsd * usdBrl;
+            walletBalanceText.setText("Saldo  " + eth + "  •  " + moneyBrl(brl));
+        } else {
+            walletBalanceText.setText("Saldo  " + eth);
+        }
+    }
+
+    private double fetchNativeEthBalance(String address) {
+        HttpURLConnection conn = null;
+        try {
+            URL url = new URL(ROBINHOOD_RPC);
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(7000);
+            conn.setReadTimeout(7000);
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setRequestProperty("Accept", "application/json");
+
+            JSONObject request = new JSONObject();
+            request.put("jsonrpc", "2.0");
+            request.put("id", 1);
+            request.put("method", "eth_getBalance");
+
+            JSONArray params = new JSONArray();
+            params.put(address);
+            params.put("latest");
+            request.put("params", params);
+
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(request.toString().getBytes(StandardCharsets.UTF_8));
+                os.flush();
+            }
+
+            int code = conn.getResponseCode();
+            if (code < 200 || code >= 300) return -1;
+
+            StringBuilder body = new StringBuilder();
+            try (BufferedReader br = new BufferedReader(
+                    new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = br.readLine()) != null) body.append(line);
+            }
+
+            JSONObject root = new JSONObject(body.toString());
+            String hex = root.optString("result", "");
+            if (!hex.startsWith("0x")) return -1;
+
+            java.math.BigInteger wei =
+                    new java.math.BigInteger(hex.substring(2).isEmpty() ? "0" : hex.substring(2), 16);
+
+            return wei.doubleValue() / 1.0e18;
+        } catch (Throwable e) {
+            return -1;
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    private double fetchEthUsd() {
+        HttpURLConnection conn = null;
+        try {
+            URL url = new URL(ETH_PRICE_API);
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(6000);
+            conn.setReadTimeout(6000);
+            conn.setRequestProperty("Accept", "application/json");
+
+            int code = conn.getResponseCode();
+            if (code < 200 || code >= 300) return 0;
+
+            StringBuilder body = new StringBuilder();
+            try (BufferedReader br = new BufferedReader(
+                    new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = br.readLine()) != null) body.append(line);
+            }
+
+            JSONObject root = new JSONObject(body.toString());
+            return parseDouble(root.optString("price", "0"));
+        } catch (Throwable e) {
+            return 0;
+        } finally {
+            if (conn != null) conn.disconnect();
         }
     }
 
@@ -785,6 +921,7 @@ public class MainActivity extends Activity {
                     lastFxUpdate = System.currentTimeMillis();
                     updateAllPositions();
                     updatePortfolio();
+                    updateWalletBalanceLabel();
                 }
             });
         });
