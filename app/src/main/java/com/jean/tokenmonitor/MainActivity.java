@@ -305,7 +305,7 @@ public class MainActivity extends Activity {
         lp.setMargins(0, dp(12), 0, 0);
         panel.setLayoutParams(lp);
 
-        TextView title = text("TOKENS NA CARTEIRA", 12, Typeface.BOLD, MUTED);
+        TextView title = text("TOKENS MONITORADOS NA CARTEIRA", 12, Typeface.BOLD, MUTED);
         title.setLetterSpacing(0.08f);
         panel.addView(title);
 
@@ -329,174 +329,285 @@ public class MainActivity extends Activity {
             return;
         }
 
-        final String address;
+        final String walletAddress;
         try {
-            address = walletManager.getAddress();
+            walletAddress = walletManager.getAddress();
         } catch (Throwable e) {
             return;
         }
 
         walletTokensFetching = true;
-        walletTokensStatusText.setText("Atualizando tokens…");
+        walletTokensStatusText.setText("Consultando tokens pela Robinhood Chain…");
 
         pool.submit(() -> {
-            JSONArray balances = fetchWalletTokenBalances(address);
+            JSONArray found = new JSONArray();
+            boolean rpcWorked = false;
+
+            for (Token token : tokens) {
+                java.math.BigInteger raw =
+                        fetchErc20Balance(token.address, walletAddress);
+
+                if (raw == null) {
+                    continue;
+                }
+
+                rpcWorked = true;
+
+                if (raw.signum() <= 0) {
+                    continue;
+                }
+
+                int decimals = fetchErc20Decimals(token.address);
+                if (decimals < 0 || decimals > 36) {
+                    decimals = 18;
+                }
+
+                java.math.BigDecimal quantity =
+                        new java.math.BigDecimal(raw)
+                                .movePointLeft(decimals);
+
+                CardRefs refs = cards.get(token.symbol);
+                double priceUsd =
+                        refs != null ? refs.lastPrice : 0;
+
+                double brlValue = -1;
+
+                if (priceUsd > 0 && usdBrl > 0) {
+                    brlValue =
+                            quantity.doubleValue()
+                                    * priceUsd
+                                    * usdBrl;
+                }
+
+                try {
+                    JSONObject item = new JSONObject();
+                    item.put("symbol", token.symbol);
+                    item.put("name", token.symbol);
+                    item.put("address", token.address);
+                    item.put("quantity", quantity.toPlainString());
+                    item.put("brl", brlValue);
+                    found.put(item);
+                } catch (Throwable ignored) {
+                }
+            }
+
+            final boolean worked = rpcWorked;
 
             runOnUiThread(() -> {
                 walletTokensFetching = false;
-
-                if (balances == null) {
-                    walletTokensStatusText.setText(
-                            "Não foi possível consultar os tokens agora.");
-                    return;
-                }
-
-                renderWalletTokens(balances);
+                renderRpcWalletTokens(found, worked);
             });
         });
     }
 
-    private JSONArray fetchWalletTokenBalances(String address) {
+    private java.math.BigInteger fetchErc20Balance(
+            String contract,
+            String walletAddress) {
+
+        try {
+            String clean = walletAddress;
+
+            if (clean.startsWith("0x") ||
+                    clean.startsWith("0X")) {
+                clean = clean.substring(2);
+            }
+
+            while (clean.length() < 64) {
+                clean = "0" + clean;
+            }
+
+            String data =
+                    "0x70a08231" + clean;
+
+            String result = rpcEthCall(contract, data);
+
+            if (result == null ||
+                    !result.startsWith("0x")) {
+                return null;
+            }
+
+            String hex = result.substring(2);
+
+            if (hex.isEmpty()) {
+                return java.math.BigInteger.ZERO;
+            }
+
+            return new java.math.BigInteger(hex, 16);
+
+        } catch (Throwable e) {
+            return null;
+        }
+    }
+
+    private int fetchErc20Decimals(String contract) {
+        try {
+            String result =
+                    rpcEthCall(contract, "0x313ce567");
+
+            if (result == null ||
+                    !result.startsWith("0x")) {
+                return -1;
+            }
+
+            String hex = result.substring(2);
+
+            if (hex.isEmpty()) return -1;
+
+            return new java.math.BigInteger(hex, 16)
+                    .intValue();
+
+        } catch (Throwable e) {
+            return -1;
+        }
+    }
+
+    private String rpcEthCall(
+            String contract,
+            String data) {
+
         HttpURLConnection conn = null;
 
         try {
-            URL url = new URL(
-                    BLOCKSCOUT_ADDRESS_API + address + "/token-balances");
+            URL url = new URL(ROBINHOOD_RPC);
 
-            conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("GET");
+            conn = (HttpURLConnection)
+                    url.openConnection();
+
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
             conn.setConnectTimeout(8000);
             conn.setReadTimeout(8000);
-            conn.setRequestProperty("Accept", "application/json");
-            conn.setRequestProperty("User-Agent", "TokenMonitorJean/0.3");
+
+            conn.setRequestProperty(
+                    "Content-Type",
+                    "application/json");
+
+            JSONObject call = new JSONObject();
+            call.put("to", contract);
+            call.put("data", data);
+
+            JSONArray params = new JSONArray();
+            params.put(call);
+            params.put("latest");
+
+            JSONObject request = new JSONObject();
+            request.put("jsonrpc", "2.0");
+            request.put("id", 1);
+            request.put("method", "eth_call");
+            request.put("params", params);
+
+            try (OutputStream os =
+                         conn.getOutputStream()) {
+
+                os.write(
+                        request.toString()
+                                .getBytes(
+                                        StandardCharsets.UTF_8));
+            }
 
             int code = conn.getResponseCode();
-            if (code < 200 || code >= 300) return null;
 
-            StringBuilder body = new StringBuilder();
+            if (code < 200 || code >= 300) {
+                return null;
+            }
 
-            try (BufferedReader br = new BufferedReader(
-                    new InputStreamReader(
-                            conn.getInputStream(),
-                            StandardCharsets.UTF_8))) {
+            StringBuilder body =
+                    new StringBuilder();
+
+            try (BufferedReader br =
+                         new BufferedReader(
+                                 new InputStreamReader(
+                                         conn.getInputStream(),
+                                         StandardCharsets.UTF_8))) {
 
                 String line;
+
                 while ((line = br.readLine()) != null) {
                     body.append(line);
                 }
             }
 
-            return new JSONArray(body.toString());
+            JSONObject root =
+                    new JSONObject(body.toString());
+
+            if (root.has("error")) {
+                return null;
+            }
+
+            return root.optString("result", null);
 
         } catch (Throwable e) {
             return null;
+
         } finally {
-            if (conn != null) conn.disconnect();
+            if (conn != null) {
+                conn.disconnect();
+            }
         }
     }
 
-    private void renderWalletTokens(JSONArray balances) {
+    private void renderRpcWalletTokens(
+            JSONArray balances,
+            boolean rpcWorked) {
+
         walletTokensContainer.removeAllViews();
 
-        int shown = 0;
-
-        for (int i = 0; i < balances.length(); i++) {
-            JSONObject item = balances.optJSONObject(i);
-            if (item == null) continue;
-
-            JSONObject tokenInfo = item.optJSONObject("token");
-            if (tokenInfo == null) continue;
-
-            String type = tokenInfo.optString("type", "");
-            if (!"ERC-20".equalsIgnoreCase(type)) continue;
-
-            String rawValue = item.optString("value", "0");
-
-            int decimals = 18;
-            try {
-                decimals = Integer.parseInt(
-                        tokenInfo.optString("decimals", "18"));
-            } catch (Throwable ignored) {}
-
-            if (decimals < 0 || decimals > 36) decimals = 18;
-
-            java.math.BigDecimal quantity;
-
-            try {
-                quantity = new java.math.BigDecimal(rawValue)
-                        .movePointLeft(decimals);
-            } catch (Throwable e) {
-                continue;
-            }
-
-            if (quantity.compareTo(java.math.BigDecimal.ZERO) <= 0) {
-                continue;
-            }
-
-            String symbol = tokenInfo.optString("symbol", "TOKEN");
-            String name = tokenInfo.optString("name", symbol);
-            String address = tokenInfo.optString(
-                    "address_hash",
-                    tokenInfo.optString("address", ""));
-
-            double priceUsd = findWalletTokenPriceUsd(
-                    address, tokenInfo);
-
-            double brlValue = -1;
-
-            if (priceUsd > 0 && usdBrl > 0) {
-                brlValue =
-                        quantity.doubleValue() * priceUsd * usdBrl;
-            }
-
-            addWalletTokenRow(
-                    symbol,
-                    name,
-                    address,
-                    quantity,
-                    brlValue);
-
-            shown++;
+        if (!rpcWorked) {
+            walletTokensStatusText.setText(
+                    "Não foi possível consultar a Robinhood Chain agora.");
+            return;
         }
 
-        if (shown == 0) {
+        if (balances.length() == 0) {
             walletTokensStatusText.setText(
-                    "Nenhum token ERC-20 encontrado nesta carteira.");
+                    "Nenhum dos tokens monitorados encontrado.");
 
             TextView empty = text(
-                    "No momento a carteira possui apenas o saldo nativo em ETH.",
+                    "A carteira possui ETH, mas não possui AI, PONS, CASHCAT ou MEME.",
                     13,
                     Typeface.NORMAL,
                     MUTED);
 
-            empty.setPadding(0, dp(5), 0, dp(4));
+            empty.setPadding(
+                    0, dp(5), 0, dp(4));
+
             walletTokensContainer.addView(empty);
-        } else {
-            walletTokensStatusText.setText(
-                    shown + (shown == 1
-                            ? " token encontrado"
-                            : " tokens encontrados"));
+            return;
         }
-    }
 
-    private double findWalletTokenPriceUsd(
-            String address,
-            JSONObject tokenInfo) {
+        walletTokensStatusText.setText(
+                balances.length() +
+                        (balances.length() == 1
+                                ? " token encontrado"
+                                : " tokens encontrados"));
 
-        if (address != null && !address.isEmpty()) {
-            for (Token token : tokens) {
-                if (token.address.equalsIgnoreCase(address)) {
-                    CardRefs refs = cards.get(token.symbol);
+        for (int i = 0;
+             i < balances.length();
+             i++) {
 
-                    if (refs != null && refs.lastPrice > 0) {
-                        return refs.lastPrice;
-                    }
-                }
+            JSONObject item =
+                    balances.optJSONObject(i);
+
+            if (item == null) continue;
+
+            java.math.BigDecimal quantity;
+
+            try {
+                quantity =
+                        new java.math.BigDecimal(
+                                item.optString(
+                                        "quantity", "0"));
+            } catch (Throwable e) {
+                continue;
             }
-        }
 
-        return parseDouble(
-                tokenInfo.optString("exchange_rate", "0"));
+            addWalletTokenRow(
+                    item.optString("symbol", "TOKEN"),
+                    item.optString("name", "TOKEN"),
+                    item.optString("address", ""),
+                    quantity,
+                    item.optDouble("brl", -1));
+        }
     }
 
     private void addWalletTokenRow(
