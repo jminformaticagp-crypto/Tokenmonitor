@@ -305,6 +305,7 @@ public class MainActivity extends Activity {
                 walletEthBalance = balance;
                 if (price > 0) ethUsd = price;
                 updateWalletBalanceLabel();
+                updatePortfolio();
             });
         });
     }
@@ -1109,10 +1110,19 @@ public class MainActivity extends Activity {
             currentTotal += refs.currentValueBrl;
         }
 
-        double pnl = currentTotal - investedTotal;
+        double tokenCurrentTotal = currentTotal;
+
+        double ethValueBrl = 0;
+        if (walletEthBalance >= 0 && ethUsd > 0 && usdBrl > 0) {
+            ethValueBrl = walletEthBalance * ethUsd * usdBrl;
+        }
+
+        double walletTotalBrl = tokenCurrentTotal + ethValueBrl;
+
+        double pnl = tokenCurrentTotal - investedTotal;
         double pnlPct = investedTotal > 0 ? (pnl / investedTotal) * 100.0 : 0;
 
-        portfolioValue.setText(moneyBrl(currentTotal));
+        portfolioValue.setText(moneyBrl(walletTotalBrl));
         portfolioInvested.setText("Investido  " + moneyBrl(investedTotal));
 
         if (investedTotal > 0 && usdBrl > 0) {
