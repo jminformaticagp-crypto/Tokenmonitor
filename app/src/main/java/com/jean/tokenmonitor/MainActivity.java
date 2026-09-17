@@ -51,6 +51,8 @@ public class MainActivity extends Activity {
     private static final String FX_FALLBACK_API = "https://api.binance.com/api/v3/ticker/price?symbol=USDTBRL";
     private static final String ETH_PRICE_API = "https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT";
     private static final String ROBINHOOD_RPC = "https://rpc.mainnet.chain.robinhood.com";
+    private static final String BLOCKSCOUT_ADDRESS_API =
+            "https://robinhoodchain.blockscout.com/api/v2/addresses/";
     private static final long FX_REFRESH_MS = 60000L;
     private static final String PREFS = "token_monitor_beta_02";
 
@@ -87,6 +89,9 @@ public class MainActivity extends Activity {
     private LinearLayout marketSection;
     private LinearLayout walletSection;
     private LinearLayout reportsSection;
+    private LinearLayout walletTokensContainer;
+    private TextView walletTokensStatusText;
+    private boolean walletTokensFetching = false;
     private WalletManager walletManager;
     private double walletEthBalance = -1;
     private double ethUsd = 0;
@@ -118,6 +123,7 @@ public class MainActivity extends Activity {
         handler.removeCallbacks(autoRefresh);
         handler.postDelayed(autoRefresh, REFRESH_MS);
         fetchWalletBalanceAsync();
+        fetchWalletTokensAsync();
     }
 
     @Override
@@ -222,6 +228,7 @@ public class MainActivity extends Activity {
 
         walletSection.addView(walletTitle);
         walletSection.addView(buildWalletPanel());
+        walletSection.addView(buildWalletTokensPanel());
         walletSection.setVisibility(View.GONE);
         root.addView(walletSection);
 
@@ -263,6 +270,7 @@ public class MainActivity extends Activity {
             tabReports.setBackground(makeRounded(Color.rgb(54, 69, 88), 12));
 
             fetchWalletBalanceAsync();
+            fetchWalletTokensAsync();
         });
 
         tabReports.setOnClickListener(v -> {
@@ -282,6 +290,302 @@ public class MainActivity extends Activity {
         root.addView(footer);
 
         return scroll;
+    }
+
+
+    private View buildWalletTokensPanel() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(14), dp(13), dp(14), dp(13));
+        panel.setBackground(makeRoundedStroke(CARD, 16, BORDER));
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, dp(12), 0, 0);
+        panel.setLayoutParams(lp);
+
+        TextView title = text("TOKENS NA CARTEIRA", 12, Typeface.BOLD, MUTED);
+        title.setLetterSpacing(0.08f);
+        panel.addView(title);
+
+        walletTokensStatusText =
+                text("Aguardando leitura da blockchain…", 12, Typeface.NORMAL, MUTED);
+        walletTokensStatusText.setPadding(0, dp(8), 0, dp(6));
+        panel.addView(walletTokensStatusText);
+
+        walletTokensContainer = new LinearLayout(this);
+        walletTokensContainer.setOrientation(LinearLayout.VERTICAL);
+        panel.addView(walletTokensContainer);
+
+        return panel;
+    }
+
+    private void fetchWalletTokensAsync() {
+        if (walletManager == null ||
+                walletTokensContainer == null ||
+                !walletManager.hasWallet() ||
+                walletTokensFetching) {
+            return;
+        }
+
+        final String address;
+        try {
+            address = walletManager.getAddress();
+        } catch (Throwable e) {
+            return;
+        }
+
+        walletTokensFetching = true;
+        walletTokensStatusText.setText("Atualizando tokens…");
+
+        pool.submit(() -> {
+            JSONArray balances = fetchWalletTokenBalances(address);
+
+            runOnUiThread(() -> {
+                walletTokensFetching = false;
+
+                if (balances == null) {
+                    walletTokensStatusText.setText(
+                            "Não foi possível consultar os tokens agora.");
+                    return;
+                }
+
+                renderWalletTokens(balances);
+            });
+        });
+    }
+
+    private JSONArray fetchWalletTokenBalances(String address) {
+        HttpURLConnection conn = null;
+
+        try {
+            URL url = new URL(
+                    BLOCKSCOUT_ADDRESS_API + address + "/token-balances");
+
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(8000);
+            conn.setReadTimeout(8000);
+            conn.setRequestProperty("Accept", "application/json");
+            conn.setRequestProperty("User-Agent", "TokenMonitorJean/0.3");
+
+            int code = conn.getResponseCode();
+            if (code < 200 || code >= 300) return null;
+
+            StringBuilder body = new StringBuilder();
+
+            try (BufferedReader br = new BufferedReader(
+                    new InputStreamReader(
+                            conn.getInputStream(),
+                            StandardCharsets.UTF_8))) {
+
+                String line;
+                while ((line = br.readLine()) != null) {
+                    body.append(line);
+                }
+            }
+
+            return new JSONArray(body.toString());
+
+        } catch (Throwable e) {
+            return null;
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    private void renderWalletTokens(JSONArray balances) {
+        walletTokensContainer.removeAllViews();
+
+        int shown = 0;
+
+        for (int i = 0; i < balances.length(); i++) {
+            JSONObject item = balances.optJSONObject(i);
+            if (item == null) continue;
+
+            JSONObject tokenInfo = item.optJSONObject("token");
+            if (tokenInfo == null) continue;
+
+            String type = tokenInfo.optString("type", "");
+            if (!"ERC-20".equalsIgnoreCase(type)) continue;
+
+            String rawValue = item.optString("value", "0");
+
+            int decimals = 18;
+            try {
+                decimals = Integer.parseInt(
+                        tokenInfo.optString("decimals", "18"));
+            } catch (Throwable ignored) {}
+
+            if (decimals < 0 || decimals > 36) decimals = 18;
+
+            java.math.BigDecimal quantity;
+
+            try {
+                quantity = new java.math.BigDecimal(rawValue)
+                        .movePointLeft(decimals);
+            } catch (Throwable e) {
+                continue;
+            }
+
+            if (quantity.compareTo(java.math.BigDecimal.ZERO) <= 0) {
+                continue;
+            }
+
+            String symbol = tokenInfo.optString("symbol", "TOKEN");
+            String name = tokenInfo.optString("name", symbol);
+            String address = tokenInfo.optString(
+                    "address_hash",
+                    tokenInfo.optString("address", ""));
+
+            double priceUsd = findWalletTokenPriceUsd(
+                    address, tokenInfo);
+
+            double brlValue = -1;
+
+            if (priceUsd > 0 && usdBrl > 0) {
+                brlValue =
+                        quantity.doubleValue() * priceUsd * usdBrl;
+            }
+
+            addWalletTokenRow(
+                    symbol,
+                    name,
+                    address,
+                    quantity,
+                    brlValue);
+
+            shown++;
+        }
+
+        if (shown == 0) {
+            walletTokensStatusText.setText(
+                    "Nenhum token ERC-20 encontrado nesta carteira.");
+
+            TextView empty = text(
+                    "No momento a carteira possui apenas o saldo nativo em ETH.",
+                    13,
+                    Typeface.NORMAL,
+                    MUTED);
+
+            empty.setPadding(0, dp(5), 0, dp(4));
+            walletTokensContainer.addView(empty);
+        } else {
+            walletTokensStatusText.setText(
+                    shown + (shown == 1
+                            ? " token encontrado"
+                            : " tokens encontrados"));
+        }
+    }
+
+    private double findWalletTokenPriceUsd(
+            String address,
+            JSONObject tokenInfo) {
+
+        if (address != null && !address.isEmpty()) {
+            for (Token token : tokens) {
+                if (token.address.equalsIgnoreCase(address)) {
+                    CardRefs refs = cards.get(token.symbol);
+
+                    if (refs != null && refs.lastPrice > 0) {
+                        return refs.lastPrice;
+                    }
+                }
+            }
+        }
+
+        return parseDouble(
+                tokenInfo.optString("exchange_rate", "0"));
+    }
+
+    private void addWalletTokenRow(
+            String symbol,
+            String name,
+            String address,
+            java.math.BigDecimal quantity,
+            double brlValue) {
+
+        LinearLayout item = new LinearLayout(this);
+        item.setOrientation(LinearLayout.VERTICAL);
+        item.setPadding(dp(11), dp(10), dp(11), dp(10));
+        item.setBackground(makeRounded(CARD_ALT, 12));
+
+        LinearLayout.LayoutParams ip =
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT);
+        ip.setMargins(0, dp(5), 0, dp(5));
+        item.setLayoutParams(ip);
+
+        LinearLayout top = new LinearLayout(this);
+        top.setOrientation(LinearLayout.HORIZONTAL);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView symbolText =
+                text(symbol, 16, Typeface.BOLD, TEXT);
+
+        TextView valueText = text(
+                brlValue >= 0 ? moneyBrl(brlValue) : "R$ —",
+                15,
+                Typeface.BOLD,
+                brlValue >= 0 ? TEXT : MUTED);
+
+        valueText.setGravity(Gravity.END);
+
+        top.addView(
+                symbolText,
+                new LinearLayout.LayoutParams(
+                        0,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        1f));
+
+        top.addView(valueText);
+
+        item.addView(top);
+
+        String quantityText =
+                formatWalletTokenQuantity(quantity);
+
+        TextView amount = text(
+                quantityText + " " + symbol,
+                13,
+                Typeface.NORMAL,
+                TEXT);
+
+        amount.setPadding(0, dp(4), 0, 0);
+        item.addView(amount);
+
+        String detail = name;
+
+        if (address != null && !address.isEmpty()) {
+            detail += "  •  " + shortAddress(address);
+        }
+
+        TextView detailText =
+                text(detail, 10, Typeface.NORMAL, MUTED);
+
+        detailText.setPadding(0, dp(3), 0, 0);
+        item.addView(detailText);
+
+        walletTokensContainer.addView(item);
+    }
+
+    private String formatWalletTokenQuantity(
+            java.math.BigDecimal quantity) {
+
+        java.math.BigDecimal clean =
+                quantity.stripTrailingZeros();
+
+        String plain = clean.toPlainString();
+
+        if (plain.length() <= 22) {
+            return plain;
+        }
+
+        return clean.round(
+                new java.math.MathContext(10))
+                .toEngineeringString();
     }
 
     private View buildWalletPanel() {
