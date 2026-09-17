@@ -10,8 +10,8 @@ android {
         applicationId 'com.jean.tokenmonitor'
         minSdk 26
         targetSdk 36
-        versionCode 7
-        versionName '0.2.5-diagnostico'
+        versionCode 8
+        versionName '0.2.6-frase-visivel'
     }
 
     buildTypes {
@@ -30,6 +30,5 @@ dependencies {
     implementation 'org.web3j:core:4.12.3-android'
     implementation 'org.web3j:crypto:4.12.3-android'
     implementation 'org.web3j:utils:4.12.3-android'
-    implementation 'org.bouncycastle:bcprov-jdk18on:1.78.1'
     implementation 'org.bouncycastle:bcprov-jdk18on:1.78.1'
 }

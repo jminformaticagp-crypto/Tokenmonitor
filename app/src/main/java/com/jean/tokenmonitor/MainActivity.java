@@ -317,12 +317,12 @@ public class MainActivity extends Activity {
                 13, Typeface.BOLD, Color.rgb(125, 40, 40));
         box.addView(warning);
 
-        TextView words = text(mnemonic, 17, Typeface.BOLD, Color.DKGRAY);
+        TextView words = text(mnemonic, 17, Typeface.BOLD, TEXT);
         words.setPadding(0, dp(14), 0, dp(14));
         words.setTextIsSelectable(false);
         box.addView(words);
 
-        TextView addr = text("Endereço:\n" + address, 12, Typeface.NORMAL, Color.DKGRAY);
+        TextView addr = text("Endereço:\n" + address, 12, Typeface.NORMAL, MUTED);
         box.addView(addr);
 
         new AlertDialog.Builder(this)
@@ -343,9 +343,17 @@ public class MainActivity extends Activity {
     private void showRecoverMnemonicDialog() {
         if (walletManager.hasWallet()) {
             new AlertDialog.Builder(this)
-                    .setTitle("Carteira já existe")
-                    .setMessage("Há uma carteira salva neste aparelho. Para evitar substituição acidental, esta Beta não sobrescreve uma carteira existente.")
-                    .setPositiveButton("Fechar", null)
+                    .setTitle("Mostrar 12 palavras")
+                    .setMessage("As 12 palavras dão acesso total à carteira. Certifique-se de que ninguém esteja olhando a tela.")
+                    .setNegativeButton("Cancelar", null)
+                    .setPositiveButton("Mostrar", (d, w) -> {
+                        try {
+                            String mnemonic = walletManager.getMnemonicForInternalBackup();
+                            showNewMnemonic(mnemonic, walletManager.getAddress());
+                        } catch (Throwable e) {
+                            Toast.makeText(this, "Não foi possível abrir a frase.", Toast.LENGTH_LONG).show();
+                        }
+                    })
                     .show();
             return;
         }
