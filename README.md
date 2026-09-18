@@ -55,3 +55,12 @@ O GitHub Actions gera o artefato **TokenMonitorJean-Beta-0.2**. Dentro do ZIP es
 
 Antes de enviar valores importantes para a carteira, faça os dois backups e teste a restauração em outro aparelho ou instalação limpa.
 Nunca coloque frase-semente, chave privada ou senha de backup no GitHub.
+
+
+## Beta 0.3.6 — Histórico da carteira
+
+- consulta somente leitura das 25 transações mais recentes;
+- identifica entradas e saídas;
+- mostra valor em ETH, taxa, data, status e hash;
+- permite abrir a carteira e cada transação no explorador da Robinhood Chain;
+- compras e vendas reais continuam desativadas.
