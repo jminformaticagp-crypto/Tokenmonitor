@@ -12,6 +12,9 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.graphics.Color;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.Typeface;
 import android.os.Bundle;
 import android.os.Build;
@@ -21,6 +24,7 @@ import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.content.Context;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -44,6 +48,8 @@ import java.text.DecimalFormatSymbols;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TimeZone;
@@ -112,6 +118,7 @@ public class MainActivity extends Activity {
     private WalletManager walletManager;
     private double walletEthBalance = -1;
     private double ethUsd = 0;
+    private double realWalletTokenValueBrl = 0;
     private String pendingBackupJson;
     private static final int REQ_CREATE_BACKUP = 701;
     private static final int REQ_OPEN_BACKUP = 702;
@@ -882,6 +889,22 @@ public class MainActivity extends Activity {
             return;
         }
 
+        realWalletTokenValueBrl = 0;
+        for (CardRefs refs : cards.values()) refs.realWalletQuantity = 0;
+
+        for (int i = 0; i < balances.length(); i++) {
+            JSONObject item = balances.optJSONObject(i);
+            if (item == null) continue;
+            CardRefs refs = cards.get(item.optString("symbol", ""));
+            if (refs != null) {
+                refs.realWalletQuantity = parseDouble(item.optString("quantity", "0"));
+            }
+            double brl = item.optDouble("brl", -1);
+            if (brl > 0) realWalletTokenValueBrl += brl;
+        }
+        updateAllPositions();
+        updatePortfolio();
+
         if (balances.length() == 0) {
             walletTokensStatusText.setText(
                     "Nenhum dos tokens monitorados encontrado.");
@@ -1563,6 +1586,17 @@ public class MainActivity extends Activity {
         market.setPadding(0, dp(9), 0, dp(10));
         card.addView(market);
 
+        PriceChartView chart = new PriceChartView(this);
+        chart.setBackground(makeRounded(CARD_ALT, 10));
+        card.addView(chart, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(92)));
+
+        Button chartPeriod = smallButton("Gráfico • 1h", Color.rgb(42, 56, 73));
+        LinearLayout.LayoutParams chartPeriodParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(32));
+        chartPeriodParams.setMargins(0, dp(5), 0, dp(9));
+        card.addView(chartPeriod, chartPeriodParams);
+
         LinearLayout position = new LinearLayout(this);
         position.setOrientation(LinearLayout.VERTICAL);
         position.setPadding(dp(11), dp(9), dp(11), dp(9));
@@ -1621,7 +1655,7 @@ public class MainActivity extends Activity {
         card.addView(alertsStatus);
 
         CardRefs refs = new CardRefs(price, change, market, invested, current, average, pnl,
-                positionButton, alertsButton, alertsStatus);
+                positionButton, alertsButton, alertsStatus, chart, chartPeriod);
         refs.investedBrl = readDouble("invested_brl_" + token.symbol);
         refs.quantity = readDouble("quantity_" + token.symbol);
         refs.entryPriceUsd = readDouble("entry_price_usd_" + token.symbol);
@@ -1631,6 +1665,7 @@ public class MainActivity extends Activity {
 
         positionButton.setOnClickListener(v -> showPositionDialog(token, refs));
         alertsButton.setOnClickListener(v -> showAlertsDialog(token, refs));
+        chartPeriod.setOnClickListener(v -> cycleChartPeriod(refs));
         buy.setOnClickListener(v -> showTradeDialog(token, WalletGateway.Side.BUY, refs.lastPrice));
         sell.setOnClickListener(v -> showTradeDialog(token, WalletGateway.Side.SELL, refs.lastPrice));
         return card;
@@ -2025,6 +2060,7 @@ public class MainActivity extends Activity {
         }
 
         refs.lastPrice = result.price;
+        refs.chart.addPrice(System.currentTimeMillis(), result.price);
         refs.price.setText("US$ " + fmtPrice(result.price));
         refs.change.setText("1h " + signed(result.h1) + "%  •  24h " + signed(result.h24) + "%");
         refs.change.setTextColor(result.h24 >= 0 ? GREEN : RED);
@@ -2056,6 +2092,13 @@ public class MainActivity extends Activity {
             } else {
                 refs.positionButton.setText("Posição");
             }
+            if (refs.realWalletQuantity > 0 &&
+                    Math.abs(refs.realWalletQuantity - refs.quantity) > 0.00000001) {
+                refs.averageText.setText("Preço médio  " + moneyBrlUnit(averageBrl) + "  •  quantidade manual ≠ carteira");
+                refs.averageText.setTextColor(AMBER);
+            } else {
+                refs.averageText.setTextColor(MUTED);
+            }
         } else {
             refs.averageText.setText("Preço médio  —");
             refs.positionButton.setText("Posição");
@@ -2081,10 +2124,15 @@ public class MainActivity extends Activity {
     private void updatePortfolio() {
         double investedTotal = 0;
         double currentTotal = 0;
+        double realTokenValueBrl = 0;
         for (CardRefs refs : cards.values()) {
             investedTotal += refs.investedBrl;
             currentTotal += refs.currentValueBrl;
+            if (refs.realWalletQuantity > 0 && refs.lastPrice > 0 && usdBrl > 0) {
+                realTokenValueBrl += refs.realWalletQuantity * refs.lastPrice * usdBrl;
+            }
         }
+        realWalletTokenValueBrl = realTokenValueBrl;
 
         double tokenCurrentTotal = currentTotal;
 
@@ -2093,13 +2141,13 @@ public class MainActivity extends Activity {
             ethValueBrl = walletEthBalance * ethUsd * usdBrl;
         }
 
-        double walletTotalBrl = tokenCurrentTotal + ethValueBrl;
+        double walletTotalBrl = realWalletTokenValueBrl + ethValueBrl;
 
         double pnl = tokenCurrentTotal - investedTotal;
         double pnlPct = investedTotal > 0 ? (pnl / investedTotal) * 100.0 : 0;
 
         portfolioValue.setText(moneyBrl(walletTotalBrl));
-        portfolioInvested.setText("Investido  " + moneyBrl(investedTotal));
+        portfolioInvested.setText("Posições manuais  " + moneyBrl(investedTotal));
 
         if (investedTotal > 0 && usdBrl > 0) {
             portfolioResult.setText("Resultado  " + signedMoneyBrl(pnl) + " (" + signed(pnlPct) + "%)");
@@ -2189,6 +2237,15 @@ public class MainActivity extends Activity {
     private double alertDistance(double current, double target) {
         if (current <= 0 || target <= 0) return Double.MAX_VALUE;
         return Math.abs(target - current) / current * 100.0;
+    }
+
+    private void cycleChartPeriod(CardRefs refs) {
+        if (refs.chartPeriodHours == 1) refs.chartPeriodHours = 24;
+        else if (refs.chartPeriodHours == 24) refs.chartPeriodHours = 168;
+        else refs.chartPeriodHours = 1;
+        refs.chart.setPeriodHours(refs.chartPeriodHours);
+        refs.chartPeriodButton.setText(refs.chartPeriodHours == 168
+                ? "Gráfico • 7 dias" : "Gráfico • " + refs.chartPeriodHours + "h");
     }
 
     private void checkPriceAlerts(Token token, CardRefs refs) {
@@ -2410,6 +2467,8 @@ public class MainActivity extends Activity {
         final Button positionButton;
         final Button alertsButton;
         final TextView alertsStatus;
+        final PriceChartView chart;
+        final Button chartPeriodButton;
         double lastPrice = 0;
         double investedBrl = 0;
         double quantity = 0;
@@ -2422,6 +2481,8 @@ public class MainActivity extends Activity {
         double sellTargetUsd = 0;
         double takeProfitPct = 0;
         double stopLossPct = 0;
+        double realWalletQuantity = 0;
+        int chartPeriodHours = 1;
         double currentValueBrl = 0;
         double liquidityUsd = 0;
         double volume24Usd = 0;
@@ -2429,7 +2490,8 @@ public class MainActivity extends Activity {
         CardRefs(TextView price, TextView change, TextView market,
                  TextView investedText, TextView currentText,
                  TextView averageText, TextView pnlText, Button positionButton,
-                 Button alertsButton, TextView alertsStatus) {
+                 Button alertsButton, TextView alertsStatus, PriceChartView chart,
+                 Button chartPeriodButton) {
             this.price = price;
             this.change = change;
             this.market = market;
@@ -2440,6 +2502,101 @@ public class MainActivity extends Activity {
             this.positionButton = positionButton;
             this.alertsButton = alertsButton;
             this.alertsStatus = alertsStatus;
+            this.chart = chart;
+            this.chartPeriodButton = chartPeriodButton;
+        }
+    }
+
+    private static class PricePoint {
+        final long time;
+        final double price;
+
+        PricePoint(long time, double price) {
+            this.time = time;
+            this.price = price;
+        }
+    }
+
+    private static class PriceChartView extends View {
+        private final List<PricePoint> points = new ArrayList<>();
+        private final Paint linePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint gridPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private long periodMs = 60L * 60L * 1000L;
+
+        PriceChartView(Context context) {
+            super(context);
+            linePaint.setStyle(Paint.Style.STROKE);
+            linePaint.setStrokeWidth(3f);
+            linePaint.setColor(GREEN);
+            gridPaint.setStyle(Paint.Style.STROKE);
+            gridPaint.setStrokeWidth(1f);
+            gridPaint.setColor(BORDER);
+            textPaint.setColor(MUTED);
+            textPaint.setTextSize(24f);
+            setPadding(12, 10, 12, 10);
+        }
+
+        void addPrice(long time, double price) {
+            if (price <= 0) return;
+            points.add(new PricePoint(time, price));
+            long oldest = time - 7L * 24L * 60L * 60L * 1000L;
+            while (!points.isEmpty() && points.get(0).time < oldest) points.remove(0);
+            if (points.size() > 12000) {
+                List<PricePoint> compact = new ArrayList<>();
+                for (int i = 0; i < points.size(); i += 2) compact.add(points.get(i));
+                PricePoint latest = points.get(points.size() - 1);
+                if (compact.get(compact.size() - 1) != latest) compact.add(latest);
+                points.clear();
+                points.addAll(compact);
+            }
+            invalidate();
+        }
+
+        void setPeriodHours(int hours) {
+            periodMs = hours * 60L * 60L * 1000L;
+            invalidate();
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            int left = getPaddingLeft();
+            int top = getPaddingTop();
+            int right = getWidth() - getPaddingRight();
+            int bottom = getHeight() - getPaddingBottom();
+            canvas.drawLine(left, bottom, right, bottom, gridPaint);
+            canvas.drawLine(left, top, left, bottom, gridPaint);
+
+            long cutoff = System.currentTimeMillis() - periodMs;
+            List<PricePoint> visible = new ArrayList<>();
+            for (PricePoint point : points) if (point.time >= cutoff) visible.add(point);
+            if (visible.size() < 2) {
+                canvas.drawText("Coletando dados do gráfico…", left + 12, (top + bottom) / 2f, textPaint);
+                return;
+            }
+
+            double min = Double.MAX_VALUE;
+            double max = -Double.MAX_VALUE;
+            for (PricePoint point : visible) {
+                min = Math.min(min, point.price);
+                max = Math.max(max, point.price);
+            }
+            if (max <= min) max = min + Math.max(min * 0.001, 0.00000001);
+            PricePoint first = visible.get(0);
+            PricePoint last = visible.get(visible.size() - 1);
+            linePaint.setColor(last.price >= first.price ? GREEN : RED);
+
+            long start = Math.max(cutoff, first.time);
+            long span = Math.max(1L, last.time - start);
+            Path path = new Path();
+            for (int i = 0; i < visible.size(); i++) {
+                PricePoint point = visible.get(i);
+                float x = left + (float) (point.time - start) / span * (right - left);
+                float y = bottom - (float) ((point.price - min) / (max - min)) * (bottom - top);
+                if (i == 0) path.moveTo(x, y); else path.lineTo(x, y);
+            }
+            canvas.drawPath(path, linePaint);
         }
     }
 

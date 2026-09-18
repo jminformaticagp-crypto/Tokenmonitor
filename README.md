@@ -1,4 +1,13 @@
-# Token Monitor Jean — Beta 0.4.0
+# Token Monitor Jean — Beta 0.4.1
+
+## Beta 0.4.1 — carteira real e gráficos
+
+- o valor total da carteira usa somente ETH e tokens confirmados na blockchain;
+- posições manuais não aumentam mais o patrimônio real;
+- aviso quando a quantidade manual diverge do saldo real;
+- gráfico ao vivo dentro de cada cartão de token;
+- seleção de visualização entre 1 hora, 24 horas e 7 dias;
+- o gráfico começa a coletar dados após o app ser aberto e mantém até sete dias durante a sessão.
 
 ## Beta 0.4.0 — alertas de preço
 

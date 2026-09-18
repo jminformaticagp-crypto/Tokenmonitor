@@ -3,7 +3,7 @@ name: Build Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master, beta-0.3, beta-0.3.6, beta-0.3.7, beta-0.3.8, beta-0.3.9, beta-0.4.0 ]
+    branches: [ main, master, beta-0.3, beta-0.3.6, beta-0.3.7, beta-0.3.8, beta-0.3.9, beta-0.4.0, beta-0.4.1 ]
 
 jobs:
   build:
@@ -28,5 +28,5 @@ jobs:
         run: gradle :app:assembleDebug --stacktrace
       - uses: actions/upload-artifact@v4
         with:
-          name: TokenMonitorJean-Beta-0.4.0-Alertas
+          name: TokenMonitorJean-Beta-0.4.1-Carteira-Real-Graficos
           path: app/build/outputs/apk/debug/app-debug.apk
