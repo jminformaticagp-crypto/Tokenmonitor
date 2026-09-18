@@ -1,4 +1,12 @@
-# Token Monitor Jean — Beta 0.2
+# Token Monitor Jean — Beta 0.3.7
+
+## Beta 0.3.7 — atualização rápida
+
+- cotações atualizadas a cada 2 segundos;
+- proteção contra consultas sobrepostas para reduzir travamentos;
+- botão para pausar e retomar a atualização;
+- aviso quando as cotações ficam desatualizadas por 10 segundos;
+- compra e venda reais continuam desativadas nesta etapa.
 
 Aplicativo Android pessoal para acompanhar AI, PONS, CASHCAT e MEME na Robinhood Chain.
 

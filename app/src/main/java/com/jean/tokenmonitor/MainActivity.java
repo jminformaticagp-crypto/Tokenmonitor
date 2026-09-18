@@ -45,7 +45,8 @@ import java.nio.charset.StandardCharsets;
 
 public class MainActivity extends Activity {
 
-    private static final long REFRESH_MS = 5000L;
+    private static final long REFRESH_MS = 2000L;
+    private static final long STALE_AFTER_MS = 10000L;
     private static final String DEX_API = "https://api.dexscreener.com/latest/dex/tokens/";
     private static final String FX_API = "https://economia.awesomeapi.com.br/json/last/USD-BRL";
     private static final String FX_FALLBACK_API = "https://api.binance.com/api/v3/ticker/price?symbol=USDTBRL";
@@ -80,6 +81,7 @@ public class MainActivity extends Activity {
     private SharedPreferences prefs;
     private WalletGateway walletGateway;
     private TextView statusText;
+    private Button refreshToggleButton;
     private TextView portfolioValue;
     private TextView portfolioInvested;
     private TextView portfolioResult;
@@ -102,10 +104,13 @@ public class MainActivity extends Activity {
     private static final int REQ_CREATE_BACKUP = 701;
     private static final int REQ_OPEN_BACKUP = 702;
     private boolean refreshRunning = false;
+    private boolean refreshPaused = false;
     private boolean fxFetching = false;
     private int completed = 0;
+    private int successful = 0;
     private double usdBrl = 0;
     private long lastFxUpdate = 0;
+    private long lastMarketUpdate = 0;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -124,7 +129,11 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         handler.removeCallbacks(autoRefresh);
-        handler.postDelayed(autoRefresh, REFRESH_MS);
+        handler.removeCallbacks(staleStatusCheck);
+        if (!refreshPaused) {
+            handler.postDelayed(autoRefresh, REFRESH_MS);
+        }
+        handler.post(staleStatusCheck);
         fetchWalletBalanceAsync();
         fetchWalletTokensAsync();
     }
@@ -133,6 +142,7 @@ public class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         handler.removeCallbacks(autoRefresh);
+        handler.removeCallbacks(staleStatusCheck);
     }
 
     @Override
@@ -144,8 +154,21 @@ public class MainActivity extends Activity {
     private final Runnable autoRefresh = new Runnable() {
         @Override
         public void run() {
+            if (refreshPaused) return;
             refreshAll();
             handler.postDelayed(this, REFRESH_MS);
+        }
+    };
+
+    private final Runnable staleStatusCheck = new Runnable() {
+        @Override
+        public void run() {
+            if (!refreshPaused && !refreshRunning && lastMarketUpdate > 0 &&
+                    System.currentTimeMillis() - lastMarketUpdate >= STALE_AFTER_MS) {
+                statusText.setText("Atenção: cotação desatualizada • tentando reconectar…");
+                statusText.setTextColor(AMBER);
+            }
+            handler.postDelayed(this, 1000L);
         }
     };
 
@@ -183,6 +206,11 @@ public class MainActivity extends Activity {
         statusText = text("Conectando ao mercado…", 12, Typeface.NORMAL, MUTED);
         statusText.setPadding(0, dp(12), 0, dp(12));
         root.addView(statusText);
+
+        refreshToggleButton = smallButton("Pausar atualização", Color.rgb(54, 69, 88));
+        root.addView(refreshToggleButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(40)));
+        refreshToggleButton.setOnClickListener(v -> toggleAutoRefresh());
 
         LinearLayout tabs = new LinearLayout(this);
         tabs.setOrientation(LinearLayout.HORIZONTAL);
@@ -282,7 +310,7 @@ public class MainActivity extends Activity {
             fetchTransactionsAsync();
         });
 
-        TextView footer = text("Tokens a cada 5 s • carteira em R$ • backup local criptografado", 11,
+        TextView footer = text("Tokens a cada 2 s • carteira em R$ • backup local criptografado", 11,
                 Typeface.NORMAL, MUTED);
         footer.setGravity(Gravity.CENTER);
         footer.setPadding(0, dp(15), 0, 0);
@@ -1588,19 +1616,29 @@ public class MainActivity extends Activity {
     }
 
     private synchronized void refreshAll() {
-        if (refreshRunning) return;
+        if (refreshPaused || refreshRunning) return;
         refreshRunning = true;
         completed = 0;
+        successful = 0;
         statusText.setText("Atualizando cotações…");
+        statusText.setTextColor(MUTED);
         for (Token token : tokens) {
             pool.submit(() -> {
                 PriceResult result = fetchPrice(token);
                 runOnUiThread(() -> {
                     updateCard(token, result);
+                    if (result.error == null) successful++;
                     completed++;
                     if (completed >= tokens.length) {
                         refreshRunning = false;
-                        statusText.setText("Mercado atualizado às " + nowString() + "  •  ciclo de 5 s");
+                        if (successful > 0) {
+                            lastMarketUpdate = System.currentTimeMillis();
+                            statusText.setText("Mercado atualizado às " + nowString() + "  •  ciclo de 2 s");
+                            statusText.setTextColor(MUTED);
+                        } else {
+                            statusText.setText("Atenção: não foi possível atualizar as cotações");
+                            statusText.setTextColor(AMBER);
+                        }
                         if (usdBrl <= 0 || System.currentTimeMillis() - lastFxUpdate >= FX_REFRESH_MS) {
                             fetchUsdBrlAsync();
                         }
@@ -1608,6 +1646,24 @@ public class MainActivity extends Activity {
                     }
                 });
             });
+        }
+    }
+
+    private void toggleAutoRefresh() {
+        refreshPaused = !refreshPaused;
+        handler.removeCallbacks(autoRefresh);
+        if (refreshPaused) {
+            refreshToggleButton.setText("Retomar atualização");
+            refreshToggleButton.setBackground(makeRounded(AMBER, 12));
+            statusText.setText("Atualização pausada • preços mantidos na tela");
+            statusText.setTextColor(AMBER);
+        } else {
+            refreshToggleButton.setText("Pausar atualização");
+            refreshToggleButton.setBackground(makeRounded(Color.rgb(54, 69, 88), 12));
+            statusText.setText("Retomando cotações…");
+            statusText.setTextColor(MUTED);
+            refreshAll();
+            handler.postDelayed(autoRefresh, REFRESH_MS);
         }
     }
 
