@@ -91,7 +91,10 @@ public class MainActivity extends Activity {
     private LinearLayout reportsSection;
     private LinearLayout walletTokensContainer;
     private TextView walletTokensStatusText;
+    private LinearLayout transactionsContainer;
+    private TextView transactionsStatusText;
     private boolean walletTokensFetching = false;
+    private boolean transactionsFetching = false;
     private WalletManager walletManager;
     private double walletEthBalance = -1;
     private double ethUsd = 0;
@@ -240,12 +243,7 @@ public class MainActivity extends Activity {
         reportsTitle.setPadding(dp(2), dp(4), 0, dp(10));
         reportsSection.addView(reportsTitle);
 
-        TextView reportsInfo = text(
-                "Aqui aparecerão recebimentos, envios, valores, taxas e hashes das transações.",
-                14, Typeface.NORMAL, TEXT);
-        reportsInfo.setPadding(dp(14), dp(18), dp(14), dp(18));
-        reportsInfo.setBackground(makeRoundedStroke(CARD, 16, BORDER));
-        reportsSection.addView(reportsInfo);
+        reportsSection.addView(buildTransactionsPanel());
 
         reportsSection.setVisibility(View.GONE);
         root.addView(reportsSection);
@@ -281,6 +279,7 @@ public class MainActivity extends Activity {
             tabMarket.setBackground(makeRounded(Color.rgb(54, 69, 88), 12));
             tabWallet.setBackground(makeRounded(Color.rgb(54, 69, 88), 12));
             tabReports.setBackground(makeRounded(Color.rgb(18, 137, 87), 12));
+            fetchTransactionsAsync();
         });
 
         TextView footer = text("Tokens a cada 5 s • carteira em R$ • backup local criptografado", 11,
@@ -292,6 +291,203 @@ public class MainActivity extends Activity {
         return scroll;
     }
 
+
+    private View buildTransactionsPanel() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(14), dp(13), dp(14), dp(13));
+        panel.setBackground(makeRoundedStroke(CARD, 16, BORDER));
+
+        TextView title = text("HISTÓRICO DA CARTEIRA", 12, Typeface.BOLD, MUTED);
+        title.setLetterSpacing(0.08f);
+        panel.addView(title);
+
+        transactionsStatusText = text(
+                "Abra esta aba para consultar as transações.",
+                12, Typeface.NORMAL, MUTED);
+        transactionsStatusText.setPadding(0, dp(8), 0, dp(8));
+        panel.addView(transactionsStatusText);
+
+        Button openAddress = smallButton("Abrir carteira no explorador", Color.rgb(54, 69, 88));
+        panel.addView(openAddress, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(40)));
+        openAddress.setOnClickListener(v -> openWalletInExplorer());
+
+        transactionsContainer = new LinearLayout(this);
+        transactionsContainer.setOrientation(LinearLayout.VERTICAL);
+        transactionsContainer.setPadding(0, dp(8), 0, 0);
+        panel.addView(transactionsContainer);
+        return panel;
+    }
+
+    private void fetchTransactionsAsync() {
+        if (transactionsContainer == null || transactionsStatusText == null ||
+                walletManager == null || transactionsFetching) return;
+
+        if (!walletManager.hasWallet()) {
+            transactionsStatusText.setText("Crie ou recupere a carteira para consultar o histórico.");
+            transactionsContainer.removeAllViews();
+            return;
+        }
+
+        final String address;
+        try {
+            address = walletManager.getAddress();
+        } catch (Throwable e) {
+            transactionsStatusText.setText("Não foi possível abrir a carteira local.");
+            return;
+        }
+
+        transactionsFetching = true;
+        transactionsStatusText.setText("Consultando histórico na Robinhood Chain…");
+        pool.submit(() -> {
+            JSONArray items = fetchTransactions(address);
+            runOnUiThread(() -> {
+                transactionsFetching = false;
+                renderTransactions(address, items);
+            });
+        });
+    }
+
+    private JSONArray fetchTransactions(String address) {
+        HttpURLConnection conn = null;
+        try {
+            URL url = new URL(BLOCKSCOUT_ADDRESS_API + address + "/transactions");
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(9000);
+            conn.setReadTimeout(9000);
+            conn.setRequestProperty("Accept", "application/json");
+            conn.setRequestProperty("User-Agent", "TokenMonitorJean/0.3.6");
+            int code = conn.getResponseCode();
+            if (code < 200 || code >= 300) return null;
+
+            StringBuilder body = new StringBuilder();
+            try (BufferedReader br = new BufferedReader(new InputStreamReader(
+                    conn.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = br.readLine()) != null) body.append(line);
+            }
+            return new JSONObject(body.toString()).optJSONArray("items");
+        } catch (Throwable e) {
+            return null;
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    private void renderTransactions(String address, JSONArray items) {
+        transactionsContainer.removeAllViews();
+        if (items == null) {
+            transactionsStatusText.setText("Histórico temporariamente indisponível. Tente novamente.");
+            return;
+        }
+        if (items.length() == 0) {
+            transactionsStatusText.setText("Nenhuma transação encontrada para esta carteira.");
+            return;
+        }
+
+        int limit = Math.min(items.length(), 25);
+        transactionsStatusText.setText(limit + " transações recentes • somente leitura");
+        for (int i = 0; i < limit; i++) {
+            JSONObject tx = items.optJSONObject(i);
+            if (tx == null) continue;
+            addTransactionRow(address, tx);
+        }
+    }
+
+    private void addTransactionRow(String address, JSONObject tx) {
+        String hash = tx.optString("hash", "");
+        String from = objectAddress(tx.opt("from"));
+        String to = objectAddress(tx.opt("to"));
+        boolean outgoing = address.equalsIgnoreCase(from);
+        String direction = outgoing ? "SAÍDA" : "ENTRADA";
+        int directionColor = outgoing ? RED : GREEN;
+
+        java.math.BigDecimal value = weiToEth(tx.optString("value", "0"));
+        String feeWei = "0";
+        JSONObject fee = tx.optJSONObject("fee");
+        if (fee != null) feeWei = fee.optString("value", "0");
+        java.math.BigDecimal feeEth = weiToEth(feeWei);
+
+        String timestamp = tx.optString("timestamp", "");
+        if (timestamp.length() >= 16) {
+            timestamp = timestamp.substring(0, 16).replace('T', ' ');
+        }
+        String status = tx.optString("status", "");
+        String statusLabel = "ok".equalsIgnoreCase(status) ? "Confirmada" :
+                ("error".equalsIgnoreCase(status) ? "Falhou" : status);
+
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(12), dp(11), dp(12), dp(11));
+        card.setBackground(makeRoundedStroke(CARD_ALT, 13, BORDER));
+
+        TextView header = text(direction + "  •  " + timestamp, 12, Typeface.BOLD, directionColor);
+        card.addView(header);
+
+        String counterpart = outgoing ? to : from;
+        TextView detail = text(
+                "Valor  " + formatEth(value) + " ETH\n" +
+                (outgoing ? "Para  " : "De  ") + shortAddress(counterpart) + "\n" +
+                "Taxa  " + formatEth(feeEth) + " ETH\n" +
+                "Hash  " + shortAddress(hash) +
+                (statusLabel.isEmpty() ? "" : "\nStatus  " + statusLabel),
+                12, Typeface.NORMAL, TEXT);
+        detail.setPadding(0, dp(7), 0, dp(8));
+        card.addView(detail);
+
+        Button explorer = smallButton("Abrir transação no explorador", Color.rgb(54, 69, 88));
+        explorer.setOnClickListener(v -> openExplorerUrl(
+                "https://robinhoodchain.blockscout.com/tx/" + hash));
+        card.addView(explorer, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(38)));
+
+        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        cp.setMargins(0, 0, 0, dp(9));
+        transactionsContainer.addView(card, cp);
+    }
+
+    private String objectAddress(Object value) {
+        if (value instanceof JSONObject) {
+            return ((JSONObject) value).optString("hash", "");
+        }
+        return value == null ? "" : String.valueOf(value);
+    }
+
+    private java.math.BigDecimal weiToEth(String wei) {
+        try {
+            return new java.math.BigDecimal(wei).movePointLeft(18);
+        } catch (Throwable e) {
+            return java.math.BigDecimal.ZERO;
+        }
+    }
+
+    private String formatEth(java.math.BigDecimal value) {
+        return value.stripTrailingZeros().toPlainString();
+    }
+
+    private void openWalletInExplorer() {
+        if (walletManager == null || !walletManager.hasWallet()) {
+            Toast.makeText(this, "Crie ou recupere uma carteira primeiro.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        try {
+            openExplorerUrl("https://robinhoodchain.blockscout.com/address/" +
+                    walletManager.getAddress());
+        } catch (Throwable e) {
+            Toast.makeText(this, "Não foi possível abrir o explorador.", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void openExplorerUrl(String url) {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+        } catch (Throwable e) {
+            Toast.makeText(this, "Nenhum navegador disponível.", Toast.LENGTH_LONG).show();
+        }
+    }
 
     private View buildWalletTokensPanel() {
         LinearLayout panel = new LinearLayout(this);
