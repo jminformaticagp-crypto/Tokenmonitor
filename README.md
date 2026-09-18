@@ -1,4 +1,14 @@
-# Token Monitor Jean — Beta 0.3.9
+# Token Monitor Jean — Beta 0.4.0
+
+## Beta 0.4.0 — alertas de preço
+
+- alertas individuais de compra e venda em US$;
+- take profit e stop-loss em percentual sobre o preço unitário pago;
+- notificação sonora e visual no Android;
+- distância até o alvo mais próximo em cada token;
+- intervalo de segurança de 30 minutos contra notificações repetidas;
+- todos os recursos são somente avisos e não executam operações;
+- nesta versão, o monitoramento funciona enquanto o app permanece aberto.
 
 ## Beta 0.3.9 — valor unitário da posição
 

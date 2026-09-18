@@ -1,13 +1,20 @@
 package com.jean.tokenmonitor;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.SharedPreferences;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.os.Bundle;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
@@ -15,6 +22,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -58,6 +66,8 @@ public class MainActivity extends Activity {
             "https://robinhoodchain.blockscout.com/api?module=account&action=txlist&sort=desc&address=";
     private static final long FX_REFRESH_MS = 60000L;
     private static final String PREFS = "token_monitor_beta_02";
+    private static final String ALERT_CHANNEL_ID = "token_price_alerts";
+    private static final long ALERT_COOLDOWN_MS = 30L * 60L * 1000L;
 
     private static final int BG = Color.rgb(9, 14, 21);
     private static final int CARD = Color.rgb(18, 26, 36);
@@ -105,6 +115,7 @@ public class MainActivity extends Activity {
     private String pendingBackupJson;
     private static final int REQ_CREATE_BACKUP = 701;
     private static final int REQ_OPEN_BACKUP = 702;
+    private static final int REQ_NOTIFICATIONS = 703;
     private boolean refreshRunning = false;
     private boolean refreshPaused = false;
     private boolean fxFetching = false;
@@ -123,6 +134,7 @@ public class MainActivity extends Activity {
         getWindow().setStatusBarColor(BG);
         getWindow().setNavigationBarColor(BG);
         setContentView(buildUi());
+        prepareNotifications();
         fetchUsdBrlAsync();
         refreshAll();
     }
@@ -1596,17 +1608,120 @@ public class MainActivity extends Activity {
         actions.addView(sell, sp);
         card.addView(actions);
 
-        CardRefs refs = new CardRefs(price, change, market, invested, current, average, pnl, positionButton);
+        Button alertsButton = smallButton("Alertas desativados", Color.rgb(54, 69, 88));
+        LinearLayout.LayoutParams alertsParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(40));
+        alertsParams.setMargins(0, dp(8), 0, 0);
+        card.addView(alertsButton, alertsParams);
+
+        TextView alertsStatus = text("Defina compra, venda, take profit ou stop-loss", 10,
+                Typeface.NORMAL, MUTED);
+        alertsStatus.setGravity(Gravity.CENTER);
+        alertsStatus.setPadding(0, dp(5), 0, 0);
+        card.addView(alertsStatus);
+
+        CardRefs refs = new CardRefs(price, change, market, invested, current, average, pnl,
+                positionButton, alertsButton, alertsStatus);
         refs.investedBrl = readDouble("invested_brl_" + token.symbol);
         refs.quantity = readDouble("quantity_" + token.symbol);
         refs.entryPriceUsd = readDouble("entry_price_usd_" + token.symbol);
+        loadAlerts(token, refs);
         cards.put(token.symbol, refs);
         updatePosition(token, refs);
 
         positionButton.setOnClickListener(v -> showPositionDialog(token, refs));
+        alertsButton.setOnClickListener(v -> showAlertsDialog(token, refs));
         buy.setOnClickListener(v -> showTradeDialog(token, WalletGateway.Side.BUY, refs.lastPrice));
         sell.setOnClickListener(v -> showTradeDialog(token, WalletGateway.Side.SELL, refs.lastPrice));
         return card;
+    }
+
+    private void showAlertsDialog(Token token, CardRefs refs) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(4), dp(20), dp(10));
+
+        TextView help = text("Marque os avisos desejados. Valor zero desativa o respectivo alerta.",
+                13, Typeface.NORMAL, Color.DKGRAY);
+        box.addView(help);
+
+        CheckBox buyEnabled = alertCheck("Avisar no preço de compra", refs.buyAlertEnabled);
+        EditText buyInput = decimalInput("Preço de compra em US$");
+        if (refs.buyTargetUsd > 0) buyInput.setText(rawNumber(refs.buyTargetUsd));
+        box.addView(buyEnabled);
+        box.addView(buyInput, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));
+
+        CheckBox sellEnabled = alertCheck("Avisar no preço de venda", refs.sellAlertEnabled);
+        EditText sellInput = decimalInput("Preço de venda em US$");
+        if (refs.sellTargetUsd > 0) sellInput.setText(rawNumber(refs.sellTargetUsd));
+        box.addView(sellEnabled);
+        box.addView(sellInput, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));
+
+        CheckBox takeProfitEnabled = alertCheck("Avisar no take profit", refs.takeProfitEnabled);
+        EditText takeProfitInput = decimalInput("Take profit em % sobre o preço pago");
+        if (refs.takeProfitPct > 0) takeProfitInput.setText(rawNumber(refs.takeProfitPct));
+        box.addView(takeProfitEnabled);
+        box.addView(takeProfitInput, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));
+
+        CheckBox stopLossEnabled = alertCheck("Avisar no stop-loss", refs.stopLossEnabled);
+        EditText stopLossInput = decimalInput("Stop-loss em % abaixo do preço pago");
+        if (refs.stopLossPct > 0) stopLossInput.setText(rawNumber(refs.stopLossPct));
+        box.addView(stopLossEnabled);
+        box.addView(stopLossInput, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(box);
+
+        new AlertDialog.Builder(this)
+                .setTitle("Alertas • " + token.symbol)
+                .setView(scroll)
+                .setNegativeButton("Cancelar", null)
+                .setNeutralButton("Desativar todos", (d, w) -> {
+                    refs.buyAlertEnabled = false;
+                    refs.sellAlertEnabled = false;
+                    refs.takeProfitEnabled = false;
+                    refs.stopLossEnabled = false;
+                    saveAlerts(token, refs);
+                    updateAlertUi(refs);
+                })
+                .setPositiveButton("Salvar", (d, w) -> {
+                    double buy = parseUserNumber(buyInput.getText().toString());
+                    double sell = parseUserNumber(sellInput.getText().toString());
+                    double takeProfit = parseUserNumber(takeProfitInput.getText().toString());
+                    double stopLoss = parseUserNumber(stopLossInput.getText().toString());
+                    if ((buyEnabled.isChecked() && buy <= 0) ||
+                            (sellEnabled.isChecked() && sell <= 0) ||
+                            (takeProfitEnabled.isChecked() && takeProfit <= 0) ||
+                            (stopLossEnabled.isChecked() && stopLoss <= 0)) {
+                        Toast.makeText(this, "Preencha os valores dos alertas ativados.", Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    if ((takeProfitEnabled.isChecked() || stopLossEnabled.isChecked()) &&
+                            refs.entryPriceUsd <= 0) {
+                        Toast.makeText(this, "Cadastre primeiro o preço unitário pago em Posição.", Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    refs.buyAlertEnabled = buyEnabled.isChecked();
+                    refs.sellAlertEnabled = sellEnabled.isChecked();
+                    refs.takeProfitEnabled = takeProfitEnabled.isChecked();
+                    refs.stopLossEnabled = stopLossEnabled.isChecked();
+                    refs.buyTargetUsd = buy;
+                    refs.sellTargetUsd = sell;
+                    refs.takeProfitPct = takeProfit;
+                    refs.stopLossPct = stopLoss;
+                    saveAlerts(token, refs);
+                    updateAlertUi(refs);
+                    checkPriceAlerts(token, refs);
+                })
+                .show();
+    }
+
+    private CheckBox alertCheck(String label, boolean checked) {
+        CheckBox box = new CheckBox(this);
+        box.setText(label);
+        box.setTextColor(Color.DKGRAY);
+        box.setChecked(checked);
+        return box;
     }
 
     private void showPositionDialog(Token token, CardRefs refs) {
@@ -1917,6 +2032,8 @@ public class MainActivity extends Activity {
         refs.volume24Usd = result.volume24;
         updateMarket(refs);
         updatePosition(token, refs);
+        updateAlertUi(refs);
+        checkPriceAlerts(token, refs);
     }
 
     private void updateMarket(CardRefs refs) {
@@ -1999,6 +2116,150 @@ public class MainActivity extends Activity {
                 .putString("quantity_" + token.symbol, Double.toString(refs.quantity))
                 .putString("entry_price_usd_" + token.symbol, Double.toString(refs.entryPriceUsd))
                 .apply();
+    }
+
+    private void loadAlerts(Token token, CardRefs refs) {
+        String suffix = "_" + token.symbol;
+        refs.buyAlertEnabled = prefs.getBoolean("alert_buy_enabled" + suffix, false);
+        refs.sellAlertEnabled = prefs.getBoolean("alert_sell_enabled" + suffix, false);
+        refs.takeProfitEnabled = prefs.getBoolean("alert_tp_enabled" + suffix, false);
+        refs.stopLossEnabled = prefs.getBoolean("alert_sl_enabled" + suffix, false);
+        refs.buyTargetUsd = readDouble("alert_buy_value" + suffix);
+        refs.sellTargetUsd = readDouble("alert_sell_value" + suffix);
+        refs.takeProfitPct = readDouble("alert_tp_value" + suffix);
+        refs.stopLossPct = readDouble("alert_sl_value" + suffix);
+        updateAlertUi(refs);
+    }
+
+    private void saveAlerts(Token token, CardRefs refs) {
+        String suffix = "_" + token.symbol;
+        prefs.edit()
+                .putBoolean("alert_buy_enabled" + suffix, refs.buyAlertEnabled)
+                .putBoolean("alert_sell_enabled" + suffix, refs.sellAlertEnabled)
+                .putBoolean("alert_tp_enabled" + suffix, refs.takeProfitEnabled)
+                .putBoolean("alert_sl_enabled" + suffix, refs.stopLossEnabled)
+                .putString("alert_buy_value" + suffix, Double.toString(refs.buyTargetUsd))
+                .putString("alert_sell_value" + suffix, Double.toString(refs.sellTargetUsd))
+                .putString("alert_tp_value" + suffix, Double.toString(refs.takeProfitPct))
+                .putString("alert_sl_value" + suffix, Double.toString(refs.stopLossPct))
+                .apply();
+    }
+
+    private void updateAlertUi(CardRefs refs) {
+        int active = (refs.buyAlertEnabled ? 1 : 0) + (refs.sellAlertEnabled ? 1 : 0) +
+                (refs.takeProfitEnabled ? 1 : 0) + (refs.stopLossEnabled ? 1 : 0);
+        if (active == 0) {
+            refs.alertsButton.setText("Alertas desativados");
+            refs.alertsButton.setBackground(makeRounded(Color.rgb(54, 69, 88), 12));
+            refs.alertsStatus.setText("Defina compra, venda, take profit ou stop-loss");
+            return;
+        }
+
+        refs.alertsButton.setText("Alertas • " + active + (active == 1 ? " ativo" : " ativos"));
+        refs.alertsButton.setBackground(makeRounded(Color.rgb(122, 91, 28), 12));
+        if (refs.lastPrice <= 0) {
+            refs.alertsStatus.setText("Aguardando a cotação para calcular a distância");
+            return;
+        }
+
+        double nearest = Double.MAX_VALUE;
+        String nearestName = "";
+        if (refs.buyAlertEnabled && refs.buyTargetUsd > 0) {
+            double d = alertDistance(refs.lastPrice, refs.buyTargetUsd);
+            if (d < nearest) { nearest = d; nearestName = "Compra"; }
+        }
+        if (refs.sellAlertEnabled && refs.sellTargetUsd > 0) {
+            double d = alertDistance(refs.lastPrice, refs.sellTargetUsd);
+            if (d < nearest) { nearest = d; nearestName = "Venda"; }
+        }
+        if (refs.takeProfitEnabled && refs.entryPriceUsd > 0 && refs.takeProfitPct > 0) {
+            double target = refs.entryPriceUsd * (1.0 + refs.takeProfitPct / 100.0);
+            double d = alertDistance(refs.lastPrice, target);
+            if (d < nearest) { nearest = d; nearestName = "Take profit"; }
+        }
+        if (refs.stopLossEnabled && refs.entryPriceUsd > 0 && refs.stopLossPct > 0) {
+            double target = refs.entryPriceUsd * (1.0 - refs.stopLossPct / 100.0);
+            double d = alertDistance(refs.lastPrice, target);
+            if (d < nearest) { nearest = d; nearestName = "Stop-loss"; }
+        }
+        refs.alertsStatus.setText(nearest == Double.MAX_VALUE ? "Revise os valores configurados" :
+                "Mais próximo: " + nearestName + " • distância " + signed(nearest) + "%");
+    }
+
+    private double alertDistance(double current, double target) {
+        if (current <= 0 || target <= 0) return Double.MAX_VALUE;
+        return Math.abs(target - current) / current * 100.0;
+    }
+
+    private void checkPriceAlerts(Token token, CardRefs refs) {
+        if (refs.lastPrice <= 0) return;
+        evaluateAlert(token, refs, "COMPRA", refs.buyAlertEnabled && refs.buyTargetUsd > 0,
+                refs.lastPrice <= refs.buyTargetUsd, refs.buyTargetUsd,
+                "Preço de compra atingido");
+        evaluateAlert(token, refs, "VENDA", refs.sellAlertEnabled && refs.sellTargetUsd > 0,
+                refs.lastPrice >= refs.sellTargetUsd, refs.sellTargetUsd,
+                "Preço de venda atingido");
+
+        double takeProfitTarget = refs.entryPriceUsd > 0
+                ? refs.entryPriceUsd * (1.0 + refs.takeProfitPct / 100.0) : 0;
+        evaluateAlert(token, refs, "TAKE_PROFIT", refs.takeProfitEnabled && takeProfitTarget > 0,
+                refs.lastPrice >= takeProfitTarget, takeProfitTarget,
+                "Take profit atingido");
+
+        double stopLossTarget = refs.entryPriceUsd > 0
+                ? refs.entryPriceUsd * (1.0 - refs.stopLossPct / 100.0) : 0;
+        evaluateAlert(token, refs, "STOP_LOSS", refs.stopLossEnabled && stopLossTarget > 0,
+                refs.lastPrice <= stopLossTarget, stopLossTarget,
+                "Stop-loss atingido");
+    }
+
+    private void evaluateAlert(Token token, CardRefs refs, String type, boolean enabled,
+                               boolean reached, double target, String title) {
+        if (!enabled || !reached) return;
+        String key = "alert_last_" + type + "_" + token.symbol;
+        long last = prefs.getLong(key, 0L);
+        long now = System.currentTimeMillis();
+        if (now - last < ALERT_COOLDOWN_MS) return;
+        prefs.edit().putLong(key, now).apply();
+        sendPriceNotification(token.symbol, type, title,
+                "Atual: US$ " + fmtPrice(refs.lastPrice) + " • Alvo: US$ " + fmtPrice(target));
+    }
+
+    private void prepareNotifications() {
+        NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(ALERT_CHANNEL_ID,
+                    "Alertas de preço", NotificationManager.IMPORTANCE_HIGH);
+            channel.setDescription("Compra, venda, take profit e stop-loss do Token Monitor");
+            channel.enableVibration(true);
+            manager.createNotificationChannel(channel);
+        }
+        if (Build.VERSION.SDK_INT >= 33 &&
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIFICATIONS);
+        }
+    }
+
+    private void sendPriceNotification(String symbol, String type, String title, String message) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+        Intent openApp = new Intent(this, MainActivity.class);
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
+        PendingIntent pending = PendingIntent.getActivity(this, (symbol + type).hashCode(), openApp, flags);
+        Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                ? new Notification.Builder(this, ALERT_CHANNEL_ID)
+                : new Notification.Builder(this);
+        builder.setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle(symbol + " • " + title)
+                .setContentText(message)
+                .setStyle(new Notification.BigTextStyle().bigText(message))
+                .setContentIntent(pending)
+                .setAutoCancel(true);
+        ((NotificationManager) getSystemService(NOTIFICATION_SERVICE))
+                .notify((symbol + type).hashCode(), builder.build());
     }
 
     private double readDouble(String key) {
@@ -2147,17 +2408,28 @@ public class MainActivity extends Activity {
         final TextView averageText;
         final TextView pnlText;
         final Button positionButton;
+        final Button alertsButton;
+        final TextView alertsStatus;
         double lastPrice = 0;
         double investedBrl = 0;
         double quantity = 0;
         double entryPriceUsd = 0;
+        boolean buyAlertEnabled = false;
+        boolean sellAlertEnabled = false;
+        boolean takeProfitEnabled = false;
+        boolean stopLossEnabled = false;
+        double buyTargetUsd = 0;
+        double sellTargetUsd = 0;
+        double takeProfitPct = 0;
+        double stopLossPct = 0;
         double currentValueBrl = 0;
         double liquidityUsd = 0;
         double volume24Usd = 0;
 
         CardRefs(TextView price, TextView change, TextView market,
                  TextView investedText, TextView currentText,
-                 TextView averageText, TextView pnlText, Button positionButton) {
+                 TextView averageText, TextView pnlText, Button positionButton,
+                 Button alertsButton, TextView alertsStatus) {
             this.price = price;
             this.change = change;
             this.market = market;
@@ -2166,6 +2438,8 @@ public class MainActivity extends Activity {
             this.averageText = averageText;
             this.pnlText = pnlText;
             this.positionButton = positionButton;
+            this.alertsButton = alertsButton;
+            this.alertsStatus = alertsStatus;
         }
     }
 
