@@ -54,6 +54,8 @@ public class MainActivity extends Activity {
     private static final String ROBINHOOD_RPC = "https://rpc.mainnet.chain.robinhood.com";
     private static final String BLOCKSCOUT_ADDRESS_API =
             "https://robinhoodchain.blockscout.com/api/v2/addresses/";
+    private static final String BLOCKSCOUT_CLASSIC_API =
+            "https://robinhoodchain.blockscout.com/api?module=account&action=txlist&sort=desc&address=";
     private static final long FX_REFRESH_MS = 60000L;
     private static final String PREFS = "token_monitor_beta_02";
 
@@ -336,10 +338,10 @@ public class MainActivity extends Activity {
         transactionsStatusText.setPadding(0, dp(8), 0, dp(8));
         panel.addView(transactionsStatusText);
 
-        Button openAddress = smallButton("Abrir carteira no explorador", Color.rgb(54, 69, 88));
-        panel.addView(openAddress, new LinearLayout.LayoutParams(
+        Button refreshReport = smallButton("Atualizar relatório", Color.rgb(18, 137, 87));
+        panel.addView(refreshReport, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(40)));
-        openAddress.setOnClickListener(v -> openWalletInExplorer());
+        refreshReport.setOnClickListener(v -> fetchTransactionsAsync());
 
         transactionsContainer = new LinearLayout(this);
         transactionsContainer.setOrientation(LinearLayout.VERTICAL);
@@ -378,6 +380,12 @@ public class MainActivity extends Activity {
     }
 
     private JSONArray fetchTransactions(String address) {
+        JSONArray items = fetchTransactionsRest(address);
+        if (items != null) return items;
+        return fetchTransactionsClassic(address);
+    }
+
+    private JSONArray fetchTransactionsRest(String address) {
         HttpURLConnection conn = null;
         try {
             URL url = new URL(BLOCKSCOUT_ADDRESS_API + address + "/transactions");
@@ -404,6 +412,75 @@ public class MainActivity extends Activity {
         }
     }
 
+    private JSONArray fetchTransactionsClassic(String address) {
+        HttpURLConnection conn = null;
+        try {
+            URL url = new URL(BLOCKSCOUT_CLASSIC_API + address);
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(9000);
+            conn.setReadTimeout(9000);
+            conn.setRequestProperty("Accept", "application/json");
+            conn.setRequestProperty("User-Agent", "TokenMonitorJean/0.3.8");
+            int code = conn.getResponseCode();
+            if (code < 200 || code >= 300) return null;
+
+            StringBuilder body = new StringBuilder();
+            try (BufferedReader br = new BufferedReader(new InputStreamReader(
+                    conn.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = br.readLine()) != null) body.append(line);
+            }
+
+            JSONObject root = new JSONObject(body.toString());
+            Object rawResult = root.opt("result");
+            if (!(rawResult instanceof JSONArray)) return null;
+            JSONArray rawItems = (JSONArray) rawResult;
+            JSONArray normalized = new JSONArray();
+            for (int i = 0; i < rawItems.length(); i++) {
+                JSONObject raw = rawItems.optJSONObject(i);
+                if (raw == null) continue;
+                JSONObject tx = new JSONObject();
+                tx.put("hash", raw.optString("hash", ""));
+                tx.put("from", raw.optString("from", ""));
+                tx.put("to", raw.optString("to", ""));
+                tx.put("value", raw.optString("value", "0"));
+                tx.put("timestamp", formatEpochTimestamp(raw.optString("timeStamp", "0")));
+                tx.put("status", "1".equals(raw.optString("isError", "0")) ? "error" : "ok");
+
+                java.math.BigInteger gasUsed = safeBigInteger(raw.optString("gasUsed", "0"));
+                java.math.BigInteger gasPrice = safeBigInteger(raw.optString("gasPrice", "0"));
+                JSONObject fee = new JSONObject();
+                fee.put("value", gasUsed.multiply(gasPrice).toString());
+                tx.put("fee", fee);
+                normalized.put(tx);
+            }
+            return normalized;
+        } catch (Throwable e) {
+            return null;
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    private java.math.BigInteger safeBigInteger(String value) {
+        try {
+            return new java.math.BigInteger(value == null || value.isEmpty() ? "0" : value);
+        } catch (Throwable e) {
+            return java.math.BigInteger.ZERO;
+        }
+    }
+
+    private String formatEpochTimestamp(String seconds) {
+        try {
+            long millis = Long.parseLong(seconds) * 1000L;
+            return new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+                    .format(new Date(millis));
+        } catch (Throwable e) {
+            return "";
+        }
+    }
+
     private void renderTransactions(String address, JSONArray items) {
         transactionsContainer.removeAllViews();
         if (items == null) {
@@ -416,7 +493,24 @@ public class MainActivity extends Activity {
         }
 
         int limit = Math.min(items.length(), 25);
-        transactionsStatusText.setText(limit + " transações recentes • somente leitura");
+        int incoming = 0;
+        int outgoing = 0;
+        java.math.BigDecimal totalFees = java.math.BigDecimal.ZERO;
+        for (int i = 0; i < limit; i++) {
+            JSONObject tx = items.optJSONObject(i);
+            if (tx == null) continue;
+            if (address.equalsIgnoreCase(objectAddress(tx.opt("from")))) {
+                outgoing++;
+                JSONObject fee = tx.optJSONObject("fee");
+                if (fee != null) totalFees = totalFees.add(weiToEth(fee.optString("value", "0")));
+            } else {
+                incoming++;
+            }
+        }
+        transactionsStatusText.setText(
+                limit + " movimentações recentes\n" +
+                "Entradas: " + incoming + "  •  Saídas: " + outgoing + "\n" +
+                "Taxas pagas: " + formatEth(totalFees) + " ETH");
         for (int i = 0; i < limit; i++) {
             JSONObject tx = items.optJSONObject(i);
             if (tx == null) continue;
@@ -464,12 +558,6 @@ public class MainActivity extends Activity {
                 12, Typeface.NORMAL, TEXT);
         detail.setPadding(0, dp(7), 0, dp(8));
         card.addView(detail);
-
-        Button explorer = smallButton("Abrir transação no explorador", Color.rgb(54, 69, 88));
-        explorer.setOnClickListener(v -> openExplorerUrl(
-                "https://robinhoodchain.blockscout.com/tx/" + hash));
-        card.addView(explorer, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(38)));
 
         LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);

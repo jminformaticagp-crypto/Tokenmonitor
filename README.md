@@ -1,4 +1,12 @@
-# Token Monitor Jean — Beta 0.3.7
+# Token Monitor Jean — Beta 0.3.8
+
+## Beta 0.3.8 — relatório dentro do app
+
+- histórico consultado e exibido diretamente na aba Relatórios;
+- fallback automático entre duas rotas de consulta da Robinhood Chain;
+- resumo com quantidade de entradas, saídas e total de taxas;
+- botão para atualizar o relatório sem abrir o navegador;
+- links externos removidos da tela de relatório.
 
 ## Beta 0.3.7 — atualização rápida
 

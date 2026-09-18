@@ -10,8 +10,8 @@ android {
         applicationId 'com.jean.tokenmonitor'
         minSdk 26
         targetSdk 36
-        versionCode 16
-        versionName '0.3.7-refresh-2s'
+        versionCode 17
+        versionName '0.3.8-in-app-report'
     }
 
     buildTypes {
