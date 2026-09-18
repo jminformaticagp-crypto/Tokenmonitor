@@ -1,4 +1,10 @@
-# Token Monitor Jean — Beta 0.3.8
+# Token Monitor Jean — Beta 0.3.9
+
+## Beta 0.3.9 — valor unitário da posição
+
+- o botão Posição mostra o valor unitário pago por token em US$;
+- a tela de posição possui um campo próprio para registrar o preço unitário exato em dólar;
+- ao zerar a posição, o botão volta a exibir somente Posição.
 
 ## Beta 0.3.8 — relatório dentro do app
 

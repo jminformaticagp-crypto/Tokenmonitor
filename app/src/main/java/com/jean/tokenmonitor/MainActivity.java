@@ -1596,9 +1596,10 @@ public class MainActivity extends Activity {
         actions.addView(sell, sp);
         card.addView(actions);
 
-        CardRefs refs = new CardRefs(price, change, market, invested, current, average, pnl);
+        CardRefs refs = new CardRefs(price, change, market, invested, current, average, pnl, positionButton);
         refs.investedBrl = readDouble("invested_brl_" + token.symbol);
         refs.quantity = readDouble("quantity_" + token.symbol);
+        refs.entryPriceUsd = readDouble("entry_price_usd_" + token.symbol);
         cards.put(token.symbol, refs);
         updatePosition(token, refs);
 
@@ -1626,12 +1627,17 @@ public class MainActivity extends Activity {
         if (refs.quantity > 0) quantityInput.setText(rawNumber(refs.quantity));
         box.addView(quantityInput, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)));
 
+        EditText entryPriceInput = decimalInput("Preço unitário pago em US$");
+        if (refs.entryPriceUsd > 0) entryPriceInput.setText(rawNumber(refs.entryPriceUsd));
+        box.addView(entryPriceInput, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)));
+
         new AlertDialog.Builder(this)
                 .setTitle("Posição • " + token.symbol)
                 .setView(box)
                 .setNeutralButton("Zerar", (d, w) -> {
                     refs.investedBrl = 0;
                     refs.quantity = 0;
+                    refs.entryPriceUsd = 0;
                     savePosition(token, refs);
                     updatePosition(token, refs);
                     updatePortfolio();
@@ -1640,12 +1646,14 @@ public class MainActivity extends Activity {
                 .setPositiveButton("Salvar", (d, w) -> {
                     double investedValue = parseUserNumber(investedInput.getText().toString());
                     double quantityValue = parseUserNumber(quantityInput.getText().toString());
-                    if (investedValue <= 0 || quantityValue <= 0) {
+                    double entryPriceValue = parseUserNumber(entryPriceInput.getText().toString());
+                    if (investedValue <= 0 || quantityValue <= 0 || entryPriceValue <= 0) {
                         Toast.makeText(this, "Informe valores maiores que zero.", Toast.LENGTH_LONG).show();
                         return;
                     }
                     refs.investedBrl = investedValue;
                     refs.quantity = quantityValue;
+                    refs.entryPriceUsd = entryPriceValue;
                     savePosition(token, refs);
                     updatePosition(token, refs);
                     updatePortfolio();
@@ -1925,9 +1933,15 @@ public class MainActivity extends Activity {
 
         if (refs.quantity > 0 && refs.investedBrl > 0) {
             double averageBrl = refs.investedBrl / refs.quantity;
-            refs.averageText.setText("Preço médio  " + moneyBrl(averageBrl));
+            refs.averageText.setText("Preço médio  " + moneyBrlUnit(averageBrl));
+            if (refs.entryPriceUsd > 0) {
+                refs.positionButton.setText("Posição • US$ " + fmtPrice(refs.entryPriceUsd));
+            } else {
+                refs.positionButton.setText("Posição");
+            }
         } else {
             refs.averageText.setText("Preço médio  —");
+            refs.positionButton.setText("Posição");
         }
 
         if (refs.investedBrl <= 0 || refs.quantity <= 0 || refs.lastPrice <= 0 || usdBrl <= 0) {
@@ -1983,6 +1997,7 @@ public class MainActivity extends Activity {
         prefs.edit()
                 .putString("invested_brl_" + token.symbol, Double.toString(refs.investedBrl))
                 .putString("quantity_" + token.symbol, Double.toString(refs.quantity))
+                .putString("entry_price_usd_" + token.symbol, Double.toString(refs.entryPriceUsd))
                 .apply();
     }
 
@@ -2090,6 +2105,11 @@ public class MainActivity extends Activity {
         return "R$ " + f.format(value);
     }
 
+    private String moneyBrlUnit(double value) {
+        DecimalFormat f = new DecimalFormat("#,##0.00####", DecimalFormatSymbols.getInstance(new Locale("pt", "BR")));
+        return "R$ " + f.format(value);
+    }
+
     private String signedMoneyBrl(double value) {
         return (value > 0 ? "+" : value < 0 ? "-" : "") + moneyBrl(Math.abs(value));
     }
@@ -2126,16 +2146,18 @@ public class MainActivity extends Activity {
         final TextView currentText;
         final TextView averageText;
         final TextView pnlText;
+        final Button positionButton;
         double lastPrice = 0;
         double investedBrl = 0;
         double quantity = 0;
+        double entryPriceUsd = 0;
         double currentValueBrl = 0;
         double liquidityUsd = 0;
         double volume24Usd = 0;
 
         CardRefs(TextView price, TextView change, TextView market,
                  TextView investedText, TextView currentText,
-                 TextView averageText, TextView pnlText) {
+                 TextView averageText, TextView pnlText, Button positionButton) {
             this.price = price;
             this.change = change;
             this.market = market;
@@ -2143,6 +2165,7 @@ public class MainActivity extends Activity {
             this.currentText = currentText;
             this.averageText = averageText;
             this.pnlText = pnlText;
+            this.positionButton = positionButton;
         }
     }
 
